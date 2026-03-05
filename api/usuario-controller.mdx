@@ -1,0 +1,327 @@
+---
+title: UsuarioController
+description: User management controller for creating and managing system users
+---
+
+# UsuarioController
+
+`Controllers/UsuarioController.php`
+
+The UsuarioController manages user creation and administration. It provides administrator-only functionality for creating new user accounts and viewing existing users.
+
+## Overview
+
+- **Purpose**: Create and manage system users
+- **Access Level**: Admin only (grado = 1)
+- **Model Used**: `UsuarioModel`
+- **View**: `Views/admin/crearUsuario.php`
+
+<Warning>
+This controller is restricted to administrators (grado 1). Non-admin users are redirected to the login page.
+</Warning>
+
+## Class Structure
+
+```php UsuarioController.php
+<?php
+require_once 'Models/UsuarioModel.php';
+
+class UsuarioController {
+    private $model;
+
+    public function __construct() {
+        if (session_status() === PHP_SESSION_NONE) session_start();
+        
+        if (!isset($_SESSION['logged_in']) || $_SESSION['grado'] != 1) {
+            header('Location: index.php?url=login/index');
+            exit;
+        }
+        $this->model = new UsuarioModel();
+    }
+
+    public function crear() {
+        $mensaje = '';
+        $tipoMensaje = '';
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['crear_usuario'])) {
+            $usr = strtoupper(trim($_POST['usr']));
+            $pas = trim($_POST['pas']);
+            $nombre = strtoupper(trim($_POST['nombre']));
+            $grado = intval($_POST['grado']);
+
+            if (empty($usr) || empty($pas) || empty($nombre) || empty($grado)) {
+                $mensaje = 'Todos los campos son obligatorios';
+                $tipoMensaje = 'error';
+            } elseif ($this->model->existeUsuario($usr)) {
+                $mensaje = 'El usuario ya existe en el sistema';
+                $tipoMensaje = 'error';
+            } else {
+                if ($this->model->guardar($usr, $pas, $nombre, $grado)) {
+                    $mensaje = 'Usuario creado exitosamente';
+                    $tipoMensaje = 'success';
+                }
+            }
+        }
+
+        $usuarios = $this->model->listarTodos();
+        require_once 'Views/admin/crearUsuario.php';
+    }
+}
+```
+
+## Methods
+
+### __construct()
+
+Initializes the controller with strict admin-only authentication.
+
+**Behavior:**
+1. Starts PHP session if not already active
+2. Checks for authenticated admin user (`$_SESSION['logged_in']` AND `$_SESSION['grado'] == 1`)
+3. Redirects to login page if not an administrator
+4. Instantiates `UsuarioModel` for data access
+
+**Access Control:**
+```php
+if (!isset($_SESSION['logged_in']) || $_SESSION['grado'] != 1) {
+    header('Location: index.php?url=login/index');
+    exit;
+}
+```
+
+<Note>
+Unlike HomeController, this controller requires grado = 1 (Admin). Auxiliary (grado 2) and Consultation (grado 3) users cannot access this functionality.
+</Note>
+
+### crear()
+
+Displays the user creation form and processes new user submissions.
+
+**Route:** `index.php?url=usuario/crear`
+
+**HTTP Methods:**
+- **GET**: Displays user creation form with list of existing users
+- **POST**: Processes new user creation
+
+**POST Parameters:**
+
+<ParamField body="crear_usuario" type="string" required>
+  Flag indicating user creation form submission (must be present)
+</ParamField>
+
+<ParamField body="usr" type="string" required>
+  Username (USR field). Automatically converted to uppercase and trimmed.
+</ParamField>
+
+<ParamField body="pas" type="string" required>
+  Password (PAS field). Trimmed but not hashed (stored as plain text).
+</ParamField>
+
+<ParamField body="nombre" type="string" required>
+  Full name (NOMBRE field). Automatically converted to uppercase and trimmed.
+</ParamField>
+
+<ParamField body="grado" type="int" required>
+  User role level:
+  - `1` = Admin (full access)
+  - `2` = Auxiliary (create returns)
+  - `3` = Consultation (view only)
+</ParamField>
+
+**Validation Rules:**
+
+1. **All fields required**: Username, password, name, and grado must not be empty
+2. **Username uniqueness**: Checked via `UsuarioModel::existeUsuario()`
+3. **Data sanitization**: 
+   - Username and name converted to uppercase
+   - All fields trimmed of whitespace
+   - Grado cast to integer
+
+**Response:**
+
+The method sets feedback variables for the view:
+
+<ResponseField name="mensaje" type="string">
+  Success or error message to display to admin
+</ResponseField>
+
+<ResponseField name="tipoMensaje" type="string">
+  Message type: `'success'` or `'error'` (for styling)
+</ResponseField>
+
+<ResponseField name="usuarios" type="array">
+  List of all users from `UsuarioModel::listarTodos()` for display in table
+</ResponseField>
+
+## Workflow
+
+<Steps>
+  <Step title="Admin Access">
+    Admin navigates to `index.php?url=usuario/crear`
+  </Step>
+  
+  <Step title="View Form">
+    GET request displays form with existing user list
+  </Step>
+  
+  <Step title="Submit User">
+    Admin fills form and submits with `crear_usuario` parameter
+  </Step>
+  
+  <Step title="Validation">
+    Controller validates all fields and checks username uniqueness
+  </Step>
+  
+  <Step title="Create User">
+    If valid, `UsuarioModel::guardar()` inserts new user record
+  </Step>
+  
+  <Step title="Display Result">
+    Success/error message shown with updated user list
+  </Step>
+</Steps>
+
+## Example Usage
+
+### Creating a New Auxiliary User
+
+```php
+// POST request to index.php?url=usuario/crear
+$_POST = [
+    'crear_usuario' => '1',
+    'usr' => 'jperez',
+    'pas' => 'secretpass123',
+    'nombre' => 'juan perez',
+    'grado' => 2
+];
+
+// After processing:
+// - usr becomes: "JPEREZ"
+// - nombre becomes: "JUAN PEREZ"
+// - Checks if "JPEREZ" exists
+// - If not, creates user with grado 2 (Auxiliary)
+```
+
+### Validation Errors
+
+<Accordion title="Empty Field Error">
+```php
+// Missing password
+$_POST = [
+    'crear_usuario' => '1',
+    'usr' => 'jperez',
+    'pas' => '',  // Empty
+    'nombre' => 'Juan Perez',
+    'grado' => 2
+];
+
+// Result:
+$mensaje = 'Todos los campos son obligatorios';
+$tipoMensaje = 'error';
+```
+</Accordion>
+
+<Accordion title="Duplicate Username Error">
+```php
+// Username already exists
+$_POST = [
+    'crear_usuario' => '1',
+    'usr' => 'ANALISTA',  // Exists in database
+    'pas' => 'newpass',
+    'nombre' => 'Duplicate User',
+    'grado' => 1
+];
+
+// UsuarioModel::existeUsuario('ANALISTA') returns true
+
+// Result:
+$mensaje = 'El usuario ya existe en el sistema';
+$tipoMensaje = 'error';
+```
+</Accordion>
+
+## Security Considerations
+
+<Warning>
+**CRITICAL**: Passwords are stored as plain text in the database. This is a significant security vulnerability.
+</Warning>
+
+### Current Implementation Issues
+
+1. **No password hashing**: The `pas` field is stored directly without bcrypt or password_hash()
+2. **Plain text storage**: Database contains readable passwords
+3. **No password strength validation**: No minimum length or complexity requirements
+
+### Recommended Improvements
+
+```php
+// Instead of:
+$pas = trim($_POST['pas']);
+
+// Use:
+$pas = password_hash(trim($_POST['pas']), PASSWORD_BCRYPT);
+
+// And in AuthController::login(), use:
+if (password_verify($password, $user['PAS'])) {
+    // Login successful
+}
+```
+
+See [UsuarioModel](/api/usuario-model#security-best-practices) for more security recommendations.
+
+## View Integration
+
+The `Views/admin/crearUsuario.php` view receives:
+
+```php
+// Variables passed to view
+$mensaje       // Feedback message
+$tipoMensaje   // 'success' or 'error'
+$usuarios      // Array of all users from database
+```
+
+**User List Display:**
+
+Each user in `$usuarios` contains:
+- `USR` - Username
+- `NOMBRE` - Full name
+- `GRADO` - Role level (1, 2, or 3)
+
+<Note>
+The `PAS` field is excluded from `listarTodos()` for security - passwords are not displayed in the user list.
+</Note>
+
+## Related Components
+
+- [UsuarioModel](/api/usuario-model) - Database operations for user management
+- [AuthController](/api/auth-controller) - User authentication and login
+- [AuthModel](/api/usuario-model#authmodel) - Username lookup for authentication
+
+## Database Operations
+
+All database operations are delegated to UsuarioModel:
+
+```php
+// Check if username exists
+$this->model->existeUsuario($usr)
+
+// Create new user
+$this->model->guardar($usr, $pas, $nombre, $grado)
+
+// Get all users (excluding passwords)
+$this->model->listarTodos()
+```
+
+## Route Requirements
+
+To access this controller from the navigation:
+
+```php
+// Admin user redirects after login
+if ($_SESSION['grado'] == 1) {
+    header('Location: index.php?url=home/index');
+    // Or potentially: index.php?url=usuario/crear
+}
+```
+
+Currently, the system redirects Admin users to the home dashboard. To access user management, the admin must manually navigate to `index.php?url=usuario/crear` or the navigation menu should include a link to this page.

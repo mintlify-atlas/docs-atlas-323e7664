@@ -1,0 +1,230 @@
+---
+title: HomeController
+description: Dashboard controller for displaying system statistics and analytics
+---
+
+# HomeController
+
+`Controllers/HomeController.php`
+
+The HomeController manages the main dashboard view for all authenticated users. It provides access to return statistics, both for specific dates and historical data.
+
+## Overview
+
+- **Purpose**: Display dashboard with statistics and date filtering
+- **Access Level**: All authenticated users (requires `$_SESSION['logged_in']`)
+- **Model Used**: `DevolucionModel`
+- **View**: `Views/home/dashboard.php`
+
+## Class Structure
+
+```php HomeController.php
+<?php
+require_once 'Models/DevolucionModel.php';
+
+class HomeController {
+    private $model;
+
+    public function __construct() {
+        if (session_status() === PHP_SESSION_NONE) session_start();
+        
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: index.php?url=auth/index');
+            exit;
+        }
+        
+        $this->model = new DevolucionModel();
+    }
+
+    public function index() {
+        $fechaFiltro = $_GET['fecha'] ?? date('Y-m-d');
+        $statsHoy = $this->model->obtenerEstadisticas($fechaFiltro);
+        $statsGeneral = $this->model->obtenerEstadisticas();
+        $fechas = $this->model->obtenerFechas();
+        $titulo = "Dashboard General - DevolutionSync";
+        
+        require_once 'Views/home/dashboard.php';
+    }
+}
+```
+
+## Methods
+
+### __construct()
+
+Initializes the controller with authentication and database connection.
+
+**Behavior:**
+1. Starts PHP session if not already active
+2. Checks for authenticated user (`$_SESSION['logged_in']`)
+3. Redirects to login page if not authenticated
+4. Instantiates `DevolucionModel` for data access
+
+**Access Control:**
+```php
+if (!isset($_SESSION['logged_in'])) {
+    header('Location: index.php?url=auth/index');
+    exit;
+}
+```
+
+### index()
+
+Displays the dashboard with statistics and date filtering capability.
+
+**Route:** `index.php?url=home/index`
+
+**Query Parameters:**
+
+<ParamField query="fecha" type="string" optional>
+  Date filter in `Y-m-d` format (e.g., "2024-03-05"). Defaults to current date.
+</ParamField>
+
+**Data Retrieved:**
+
+1. **$fechaFiltro** - Selected date or current date
+2. **$statsHoy** - Statistics for the filtered date
+3. **$statsGeneral** - All-time statistics (no date filter)
+4. **$fechas** - Array of available dates with returns
+
+**Statistics Structure:**
+
+Both `$statsHoy` and `$statsGeneral` contain:
+
+<ResponseField name="total" type="int">
+  Total number of returns
+</ResponseField>
+
+<ResponseField name="total_kg" type="float">
+  Total weight in kilograms (using COALESCE, defaults to 0)
+</ResponseField>
+
+<ResponseField name="total_und" type="int">
+  Total units across all returns
+</ResponseField>
+
+<ResponseField name="pendientes" type="int">
+  Count of returns with estado = 'Pendiente'
+</ResponseField>
+
+<ResponseField name="aprobados" type="int">
+  Count of returns with estado = 'Aprobado'
+</ResponseField>
+
+<ResponseField name="rechazados" type="int">
+  Count of returns with estado = 'Rechazado'
+</ResponseField>
+
+<ResponseField name="motivo_dev" type="int">
+  Count of returns with motivo = 'Devolucion'
+</ResponseField>
+
+<ResponseField name="motivo_fal" type="int">
+  Count of returns with motivo = 'Faltante'
+</ResponseField>
+
+<ResponseField name="motivo_sob" type="int">
+  Count of returns with motivo = 'Sobrante'
+</ResponseField>
+
+**Example Data Flow:**
+
+```php
+// User visits: index.php?url=home/index&fecha=2024-03-01
+
+// 1. Get statistics for March 1, 2024
+$statsHoy = [
+    'total' => 15,
+    'total_kg' => 125.5,
+    'total_und' => 45,
+    'pendientes' => 5,
+    'aprobados' => 8,
+    'rechazados' => 2,
+    'motivo_dev' => 10,
+    'motivo_fal' => 3,
+    'motivo_sob' => 2
+];
+
+// 2. Get all-time statistics
+$statsGeneral = [
+    'total' => 342,
+    'total_kg' => 2847.3,
+    'total_und' => 1256,
+    'pendientes' => 23,
+    'aprobados' => 285,
+    'rechazados' => 34,
+    'motivo_dev' => 298,
+    'motivo_fal' => 32,
+    'motivo_sob' => 12
+];
+
+// 3. Get available dates
+$fechas = ['2024-03-05', '2024-03-04', '2024-03-01', '2024-02-28'];
+```
+
+## View Integration
+
+The dashboard view (`Views/home/dashboard.php`) receives these variables and displays:
+
+- **Date selector** dropdown populated with `$fechas`
+- **Today's statistics** from `$statsHoy`
+- **Historical statistics** from `$statsGeneral`
+- **Charts and graphs** using the statistics data
+
+## Use Cases
+
+### 1. View Today's Dashboard
+
+```
+URL: index.php?url=home/index
+Result: Shows statistics for current date
+```
+
+### 2. View Historical Date
+
+```
+URL: index.php?url=home/index&fecha=2024-02-15
+Result: Shows statistics for February 15, 2024
+```
+
+### 3. Compare Day vs All-Time
+
+The controller provides both filtered and unfiltered statistics, allowing the view to display:
+- Progress bars showing today vs historical totals
+- Percentage breakdowns by status
+- Trend analysis
+
+## Security
+
+<Warning>
+All methods require authentication. Unauthenticated users are redirected to the login page.
+</Warning>
+
+**Session Requirements:**
+- `$_SESSION['logged_in']` must be `true`
+- No specific grado (role) requirement - all authenticated users can access
+
+**No Authorization Checks:** Unlike AdminController or PanelController, HomeController does not restrict by user role (grado). This allows all authenticated users to view the dashboard.
+
+## Related Components
+
+- [DevolucionModel](/api/devolucion-model) - Provides `obtenerEstadisticas()` and `obtenerFechas()` methods
+- [AuthController](/api/auth-controller) - Handles authentication and role-based redirects
+- [Dashboard Analytics Feature](/features/dashboard-analytics) - User-facing documentation
+
+## Database Queries
+
+HomeController doesn't execute queries directly. All database operations are delegated to DevolucionModel:
+
+```php
+// Filtered statistics (specific date)
+DevolucionModel::obtenerEstadisticas('2024-03-05')
+
+// All-time statistics (no filter)
+DevolucionModel::obtenerEstadisticas()
+
+// Available dates
+DevolucionModel::obtenerFechas()
+```
+
+See [DevolucionModel::obtenerEstadisticas()](/api/devolucion-model#obtenerestadisticas) for SQL query details.

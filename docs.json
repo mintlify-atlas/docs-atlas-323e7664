@@ -69,13 +69,16 @@
               "api/auth-controller",
               "api/admin-controller",
               "api/panel-controller",
-              "api/consulta-controller"
+              "api/consulta-controller",
+              "api/home-controller",
+              "api/usuario-controller"
             ]
           },
           {
             "group": "Models",
             "pages": [
               "api/devolucion-model",
+              "api/consulta-model",
               "api/producto-model",
               "api/usuario-model"
             ]

@@ -1,0 +1,438 @@
+---
+title: ConsultaModel
+description: Model for querying and retrieving return history records
+---
+
+# ConsultaModel
+
+`Models/ConsultaModel.php`
+
+The ConsultaModel provides read-only database access for querying the return history. It's used by ConsultaController to retrieve historical return records and individual return details.
+
+## Overview
+
+- **Purpose**: Query return history from devoluciones table
+- **Database Table**: `devoluciones`
+- **Connection**: PDO via `Conexion::Conectar()`
+- **Operations**: Read-only (SELECT queries)
+
+## Class Structure
+
+```php ConsultaModel.php
+<?php
+require_once 'Config/Conexion.php';
+
+class ConsultaModel {
+    private $db;
+
+    public function __construct() {
+        $this->db = Conexion::Conectar();
+    }
+
+    public function obtenerHistorial($limite = 100) {
+        try {
+            $stmt = $this->db->prepare("SELECT * FROM devoluciones ORDER BY fecha_creacion DESC LIMIT ?");
+            $stmt->bindValue(1, $limite, PDO::PARAM_INT);
+            $stmt->execute();
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            error_log("Error en ConsultaModel: " . $e->getMessage());
+            return [];
+        }
+    }
+    
+    public function obtenerPorId($id) {
+        $stmt = $this->db->prepare("SELECT * FROM devoluciones WHERE id = ?");
+        $stmt->execute([$id]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+}
+```
+
+## Methods
+
+### __construct()
+
+Initializes database connection using the PDO singleton pattern.
+
+**Behavior:**
+```php
+$this->db = Conexion::Conectar();
+```
+
+This establishes a connection to the MySQL database configured in `Config/Conexion.php`.
+
+### obtenerHistorial()
+
+Retrieves a limited list of recent return records, ordered by creation date.
+
+```php
+public function obtenerHistorial($limite = 100)
+```
+
+**Parameters:**
+
+<ParamField path="limite" type="int" default="100">
+  Maximum number of records to return. Uses PDO::PARAM_INT for type safety.
+</ParamField>
+
+**Returns:**
+
+Array of return records (associative arrays), or empty array `[]` on error.
+
+**Return Record Structure:**
+
+Each record contains all fields from the `devoluciones` table:
+
+<ResponseField name="id" type="int">
+  Auto-increment primary key
+</ResponseField>
+
+<ResponseField name="nit" type="string">
+  Customer tax ID (VARCHAR 20)
+</ResponseField>
+
+<ResponseField name="nombre_cliente" type="string">
+  Customer name (VARCHAR 255)
+</ResponseField>
+
+<ResponseField name="direccion" type="string">
+  Customer address (TEXT)
+</ResponseField>
+
+<ResponseField name="codigo_producto" type="string">
+  Product SKU or code (VARCHAR 50)
+</ResponseField>
+
+<ResponseField name="descripcion_producto" type="string">
+  Product description (TEXT)
+</ResponseField>
+
+<ResponseField name="unidad" type="string">
+  Unit of measure (VARCHAR 20)
+</ResponseField>
+
+<ResponseField name="kg" type="float">
+  Weight in kilograms (DECIMAL 10,2)
+</ResponseField>
+
+<ResponseField name="motivo" type="string">
+  Return reason: 'devolucion', 'faltante', or 'sobrante' (ENUM)
+</ResponseField>
+
+<ResponseField name="cantidad_und" type="int">
+  Quantity in units (INT)
+</ResponseField>
+
+<ResponseField name="cantidad_kg" type="float">
+  Quantity in kilograms (DECIMAL 10,2)
+</ResponseField>
+
+<ResponseField name="evidencia" type="string">
+  Path to uploaded evidence file (VARCHAR 255, nullable)
+</ResponseField>
+
+<ResponseField name="observacion" type="string">
+  User observations (TEXT)
+</ResponseField>
+
+<ResponseField name="estado" type="string">
+  Current status: 'pendiente', 'aprobado', or 'rechazado' (ENUM, default 'pendiente')
+</ResponseField>
+
+<ResponseField name="observacion_admin" type="string">
+  Administrator review notes (TEXT, nullable)
+</ResponseField>
+
+<ResponseField name="codigo_admin" type="string">
+  Authorization code from admin (VARCHAR 50, nullable)
+</ResponseField>
+
+<ResponseField name="fecha_creacion" type="timestamp">
+  Record creation timestamp (TIMESTAMP, defaults to CURRENT_TIMESTAMP)
+</ResponseField>
+
+<ResponseField name="fecha_revision" type="timestamp">
+  Review/approval timestamp (TIMESTAMP, nullable)
+</ResponseField>
+
+<ResponseField name="usuario_creador" type="string">
+  Username who created the return (VARCHAR 50, references usuarios.USR)
+</ResponseField>
+
+<ResponseField name="usuario_revisor" type="string">
+  Username who reviewed the return (VARCHAR 50, nullable)
+</ResponseField>
+
+**SQL Query:**
+
+```sql
+SELECT * 
+FROM devoluciones 
+ORDER BY fecha_creacion DESC 
+LIMIT ?
+```
+
+**Error Handling:**
+
+```php
+try {
+    // Execute query
+} catch (Exception $e) {
+    error_log("Error en ConsultaModel: " . $e->getMessage());
+    return [];
+}
+```
+
+Errors are logged to PHP error log and an empty array is returned instead of throwing an exception.
+
+### obtenerPorId()
+
+Retrieves a single return record by its unique ID.
+
+```php
+public function obtenerPorId($id)
+```
+
+**Parameters:**
+
+<ParamField path="id" type="int" required>
+  Primary key of the return record to retrieve
+</ParamField>
+
+**Returns:**
+
+Single return record (associative array) or `false` if not found.
+
+**Return Structure:**
+
+Same fields as `obtenerHistorial()` - see above for complete field list.
+
+**SQL Query:**
+
+```sql
+SELECT * 
+FROM devoluciones 
+WHERE id = ?
+```
+
+**Example Usage:**
+
+```php
+$model = new ConsultaModel();
+
+// Get return #42
+$devolucion = $model->obtenerPorId(42);
+
+if ($devolucion) {
+    echo "Cliente: " . $devolucion['nombre_cliente'];
+    echo "Estado: " . $devolucion['estado'];
+} else {
+    echo "Devolución no encontrada";
+}
+```
+
+<Note>
+This method does NOT use try-catch error handling like `obtenerHistorial()`. If the query fails, PDO will throw an exception that must be caught by the calling code.
+</Note>
+
+## Usage Examples
+
+### Retrieve Recent History (Default Limit)
+
+```php
+$consultaModel = new ConsultaModel();
+$recientes = $consultaModel->obtenerHistorial();
+
+// Returns up to 100 most recent returns
+// Ordered by fecha_creacion DESC
+```
+
+### Retrieve Last 50 Returns
+
+```php
+$consultaModel = new ConsultaModel();
+$ultimas50 = $consultaModel->obtenerHistorial(50);
+
+foreach ($ultimas50 as $devolucion) {
+    echo "{$devolucion['id']}: {$devolucion['nombre_cliente']} - {$devolucion['estado']}\n";
+}
+```
+
+### Get Specific Return Details
+
+```php
+$consultaModel = new ConsultaModel();
+
+// AJAX endpoint for return details
+$id = intval($_GET['id']);
+$detalle = $consultaModel->obtenerPorId($id);
+
+if ($detalle) {
+    echo json_encode([
+        'success' => true,
+        'data' => $detalle
+    ]);
+} else {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Devolución no encontrada'
+    ]);
+}
+```
+
+## Integration Points
+
+### ConsultaController
+
+ConsultaController uses this model for all history queries:
+
+```php
+class ConsultaController {
+    private $model;
+    
+    public function __construct() {
+        $this->model = new ConsultaModel();
+    }
+    
+    public function index() {
+        $devoluciones = $this->model->obtenerHistorial();
+        require_once 'Views/admin/consulta.php';
+    }
+    
+    public function detalles() {
+        $id = intval($_GET['id']);
+        $data = $this->model->obtenerPorId($id);
+        echo json_encode(['success' => true, 'html' => ...]);
+    }
+}
+```
+
+### AdminController
+
+AdminController also uses ConsultaModel for viewing history:
+
+```php
+class AdminController {
+    private $consultaModel;
+    
+    public function __construct() {
+        $this->consultaModel = new ConsultaModel();
+    }
+    
+    public function index() {
+        $historial = $this->consultaModel->obtenerHistorial(50);
+        // Display recent history in admin panel
+    }
+}
+```
+
+## Performance Considerations
+
+### Current Limitations
+
+1. **SELECT \* queries**: Retrieves all columns even if not needed
+2. **No pagination**: Only LIMIT, no OFFSET support for pagination
+3. **No filtering**: Cannot filter by status, date range, or user
+4. **No sorting options**: Always sorts by fecha_creacion DESC
+
+### Recommended Enhancements
+
+<Accordion title="Add Pagination Support">
+```php
+public function obtenerHistorial($limite = 100, $offset = 0) {
+    $stmt = $this->db->prepare(
+        "SELECT * FROM devoluciones 
+         ORDER BY fecha_creacion DESC 
+         LIMIT ? OFFSET ?"
+    );
+    $stmt->bindValue(1, $limite, PDO::PARAM_INT);
+    $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+</Accordion>
+
+<Accordion title="Add Filtering Options">
+```php
+public function obtenerHistorialFiltrado($filtros = [], $limite = 100) {
+    $sql = "SELECT * FROM devoluciones WHERE 1=1";
+    $params = [];
+    
+    if (isset($filtros['estado'])) {
+        $sql .= " AND estado = ?";
+        $params[] = $filtros['estado'];
+    }
+    
+    if (isset($filtros['motivo'])) {
+        $sql .= " AND motivo = ?";
+        $params[] = $filtros['motivo'];
+    }
+    
+    if (isset($filtros['fecha_desde'])) {
+        $sql .= " AND fecha_creacion >= ?";
+        $params[] = $filtros['fecha_desde'];
+    }
+    
+    $sql .= " ORDER BY fecha_creacion DESC LIMIT ?";
+    $params[] = $limite;
+    
+    $stmt = $this->db->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+</Accordion>
+
+<Accordion title="Add Count Method">
+```php
+public function contarHistorial() {
+    $stmt = $this->db->query("SELECT COUNT(*) FROM devoluciones");
+    return $stmt->fetchColumn();
+}
+```
+</Accordion>
+
+## Comparison with DevolucionModel
+
+| Feature | ConsultaModel | DevolucionModel |
+|---------|--------------|-----------------|
+| **Purpose** | Read-only queries | Full CRUD operations |
+| **Methods** | `obtenerHistorial()`, `obtenerPorId()` | `guardar()`, `obtenerPendientes()`, `procesarRevision()`, `obtenerEstadisticas()` |
+| **Filtering** | None (all records) | By status (`estado = 'Pendiente'`) |
+| **Statistics** | No | Yes (`obtenerEstadisticas()`) |
+| **Write Operations** | No | Yes (INSERT, UPDATE) |
+| **Used By** | ConsultaController, AdminController | PanelController, AdminController, HomeController |
+
+## Related Components
+
+- [ConsultaController](/api/consulta-controller) - Uses this model for history views
+- [DevolucionModel](/api/devolucion-model) - Full-featured return management model
+- [Database Schema](/technical/database-schema) - Complete devoluciones table structure
+
+## Database Connection
+
+Uses the singleton Conexion class:
+
+```php
+// Config/Conexion.php
+class Conexion {
+    public static function Conectar() {
+        $host = '192.200.100.40';
+        $db   = 'devolutionsync';
+        $user = 'SANMARINO';
+        $pass = 'sanmarino2021*';
+        $charset = 'utf8';
+        
+        $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+        $opciones = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ];
+        
+        return new PDO($dsn, $user, $pass, $opciones);
+    }
+}
+```
