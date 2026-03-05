@@ -1,0 +1,238 @@
+---
+title: 'Authentication System'
+description: 'Role-based access control with session management and security features'
+icon: 'shield-halved'
+---
+
+## Overview
+
+DevolutionSync implements a secure authentication system with role-based access control (RBAC), session management, and automatic security measures to protect enterprise data.
+
+<CardGroup cols={3}>
+  <Card title="Admin" icon="user-shield">
+    Full system access with approval authority
+  </Card>
+  <Card title="Auxiliary" icon="user-pen">
+    Register and manage product returns
+  </Card>
+  <Card title="Consultation" icon="user-lock">
+    Read-only access to system data
+  </Card>
+</CardGroup>
+
+## Role-Based Access Control
+
+The system defines three user roles (grades) with distinct permissions:
+
+<Tabs>
+  <Tab title="Admin (Grade 1)">
+    **Permissions:**
+    - Access to dashboard and analytics
+    - Review and approve/reject returns
+    - View complete system history
+    - Manage authorization codes
+    
+    **Redirect:** `index.php?url=home/index`
+  </Tab>
+  <Tab title="Auxiliary (Grade 2)">
+    **Permissions:**
+    - Register new product returns
+    - Upload evidence files
+    - View own submissions
+    - Access return creation panel
+    
+    **Redirect:** `index.php?url=devolucion/crear`
+  </Tab>
+  <Tab title="Consultation (Grade 3)">
+    **Permissions:**
+    - Read-only access to returns
+    - View system reports
+    - No modification rights
+    
+    **Redirect:** `index.php?url=consulta/index`
+  </Tab>
+</Tabs>
+
+## Login Process
+
+<Steps>
+  <Step title="User Submits Credentials">
+    The user provides their username and password through the login form.
+  </Step>
+  
+  <Step title="Credential Validation">
+    The system queries the database to validate the credentials and retrieve the user's role.
+  </Step>
+  
+  <Step title="Session Creation">
+    Upon successful authentication, a secure session is created with user details and timestamps.
+  </Step>
+  
+  <Step title="Role-Based Redirect">
+    The user is automatically redirected to their role-specific dashboard.
+  </Step>
+</Steps>
+
+### Implementation
+
+The authentication flow is handled by the `AuthController` class:
+
+```php controllers/AuthController.php
+public function login() {
+    header('Content-Type: application/json');
+    
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $username = trim($_POST['username'] ?? '');
+        $password = $_POST['password'] ?? '';
+
+        $user = $this->model->buscarUsuario($username);
+
+        if ($user && $password === $user['PAS']) {
+            $_SESSION['user'] = $user['USR'];
+            $_SESSION['nombre'] = $user['NOMBRE'];
+            $_SESSION['grado'] = $user['GRADO'];
+            $_SESSION['logged_in'] = true;
+            $_SESSION['last_activity'] = time();
+            
+            session_regenerate_id(true);
+
+            echo json_encode([
+                'success' => true,
+                'redirect' => $this->getRedirectUrl($user['GRADO'])
+            ]);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Credenciales incorrectas']);
+        }
+    }
+}
+```
+
+<Note>
+  The `session_regenerate_id(true)` call prevents session fixation attacks by generating a new session ID after successful login.
+</Note>
+
+## Session Management
+
+### Session Variables
+
+The system stores the following data in the PHP session:
+
+| Variable | Description | Example |
+|----------|-------------|----------|
+| `user` | Username identifier | `ANALISTA` |
+| `nombre` | Full name of the user | `SEBASTIAN OBANDO` |
+| `grado` | Role level (1-3) | `1` |
+| `logged_in` | Authentication flag | `true` |
+| `last_activity` | Timestamp of last action | `1709654400` |
+
+### Session Initialization
+
+Every controller initializes the session and verifies authentication:
+
+```php controllers/PanelController.php
+public function __construct() {
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    
+    // Verificar autenticación
+    if (!isset($_SESSION['logged_in'])) {
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+    
+    // Verificar permisos (Solo Admin Grado 1 o Auxiliar Grado 2)
+    if (!isset($_SESSION['grado']) || ($_SESSION['grado'] != 1 && $_SESSION['grado'] != 2)) {
+        header('Location: index.php?url=home/index');
+        exit;
+    }
+}
+```
+
+## Database Structure
+
+User credentials are stored in the `usuarios` table:
+
+```sql Script_BD/Script_DB.sql
+CREATE TABLE `usuarios` (
+    `USR` VARCHAR(50) NOT NULL,
+    `PAS` VARCHAR(50) NOT NULL,
+    `NOMBRE` VARCHAR(100) NOT NULL,
+    `GRADO` INT NOT NULL,
+    PRIMARY KEY (`USR`)
+)
+```
+
+### User Lookup
+
+The `AuthModel` handles database queries:
+
+```php models/AuthModel.php
+public function buscarUsuario($username) {
+    $sql = "SELECT USR, PAS, GRADO, NOMBRE FROM usuarios WHERE USR = ?";
+    $stmt = $this->db->prepare($sql);
+    $stmt->execute([$username]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+```
+
+<Warning>
+  The current implementation stores passwords in plain text. For production environments, implement password hashing using `password_hash()` and `password_verify()`.
+</Warning>
+
+## Logout Process
+
+The logout function destroys the session and redirects to the login page:
+
+```php controllers/AuthController.php
+public function logout() {
+    session_unset();
+    session_destroy();
+    header('Location: index.php?url=auth/index');
+    exit;
+}
+```
+
+## Security Features
+
+<AccordionGroup>
+  <Accordion title="Session Regeneration">
+    After successful login, the system calls `session_regenerate_id(true)` to prevent session fixation attacks.
+  </Accordion>
+  
+  <Accordion title="Role Verification">
+    Every protected controller validates both authentication status and role permissions before allowing access.
+  </Accordion>
+  
+  <Accordion title="Activity Tracking">
+    The `last_activity` session variable enables session timeout implementation to automatically log out inactive users.
+  </Accordion>
+  
+  <Accordion title="Prepared Statements">
+    All database queries use PDO prepared statements to prevent SQL injection attacks.
+  </Accordion>
+</AccordionGroup>
+
+## Default Users
+
+The system includes three default users for testing:
+
+```sql Script_BD/Script_DB.sql
+INSERT INTO `usuarios` (`USR`, `PAS`, `NOMBRE`, `GRADO`) VALUES 
+('ANALISTA', '1088350785', 'SEBASTIAN OBANDO', 1),
+('AUXILIAR', '895623', 'AUXILIAR', 2),
+('CONSULTA', '895623', 'CONSULTA', 3);
+```
+
+<Note>
+  Change default passwords immediately after installation for security.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Return Management" icon="box" href="/features/return-management">
+    Learn how Auxiliary users register product returns
+  </Card>
+  <Card title="Approval Workflow" icon="check-double" href="/features/approval-workflow">
+    Understand the admin review and approval process
+  </Card>
+</CardGroup>

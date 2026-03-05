@@ -1,0 +1,365 @@
+---
+title: 'Return Management'
+description: 'Product return registration, evidence upload, and validation system'
+icon: 'box-open'
+---
+
+## Overview
+
+The return management system allows Auxiliary users to register product deviations including returns, shortages, and overages. Each return includes comprehensive client and product information, photographic evidence, and automatic validation.
+
+<CardGroup cols={3}>
+  <Card title="Devolucion" icon="arrow-rotate-left">
+    Product returns from clients
+  </Card>
+  <Card title="Faltante" icon="minus-circle">
+    Inventory shortages detected
+  </Card>
+  <Card title="Sobrante" icon="plus-circle">
+    Excess inventory received
+  </Card>
+</CardGroup>
+
+## Return Types
+
+DevolutionSync tracks three types of product deviations:
+
+| Type | Database Value | Description |
+|------|----------------|-------------|
+| **Devolucion** | `devolucion` | Product returned by customer due to quality issues, damage, or other reasons |
+| **Faltante** | `faltante` | Missing products discovered during inventory reconciliation |
+| **Sobrante** | `sobrante` | Extra products found in shipments or inventory counts |
+
+## Registration Workflow
+
+<Steps>
+  <Step title="Access Registration Panel">
+    Auxiliary users navigate to `index.php?url=panel/auxiliar` to access the return registration form.
+  </Step>
+  
+  <Step title="Enter Client Information">
+    Fill in client details:
+    - NIT (tax identification)
+    - Client name
+    - Delivery address
+  </Step>
+  
+  <Step title="Select Product">
+    Choose the affected product from the product catalog. The system automatically retrieves:
+    - Item code
+    - Product description
+    - Unit of measure (UND, KG)
+    - Average weight
+  </Step>
+  
+  <Step title="Specify Quantities">
+    Enter the quantities in both units and kilograms.
+  </Step>
+  
+  <Step title="Upload Evidence">
+    Attach a photograph showing the issue (optional but recommended).
+  </Step>
+  
+  <Step title="Add Observations">
+    Provide detailed notes about the return reason and circumstances.
+  </Step>
+  
+  <Step title="Submit for Approval">
+    The return is saved with status `Pendiente` (pending) and enters the admin approval queue.
+  </Step>
+</Steps>
+
+## Implementation
+
+### Panel Controller
+
+The `PanelController` manages the registration interface and form processing:
+
+```php controllers/PanelController.php
+public function auxiliar() {
+    $productos = $this->prodModel->listarTodos();
+    $titulo = "Registro de Devolución - DevolutionSync";
+    require_once 'Views/admin/panel_auxiliar.php';
+}
+```
+
+### Registration Process
+
+The complete registration logic with validation:
+
+```php controllers/PanelController.php
+public function registrar() {
+    if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+        try {
+            // 1. Obtener datos del producto seleccionado
+            $itemProducto = $_POST['producto'] ?? '';
+            
+            if (empty($itemProducto)) {
+                throw new Exception('Debe seleccionar un producto');
+            }
+            
+            $producto = $this->prodModel->obtenerPorItem($itemProducto);
+            
+            if (!$producto) {
+                throw new Exception('Producto no encontrado');
+            }
+            
+            // 2. Validar campos obligatorios
+            $this->validarCampos($_POST);
+            
+            // 3. Manejar subida de evidencia (si existe)
+            $rutaEvidencia = null;
+            if (isset($_FILES['evidencia']) && $_FILES['evidencia']['error'] == UPLOAD_ERR_OK) {
+                $rutaEvidencia = $this->subirEvidencia($_FILES['evidencia']);
+            }
+            
+            // 4. Preparar array de datos para guardar
+            $datos = [
+                'nit' => $this->limpiar($_POST['nit']),
+                'nombre_cliente' => $this->limpiar($_POST['nombre_cliente']),
+                'direccion' => $this->limpiar($_POST['direccion']),
+                'item_producto' => $producto['item'],
+                'descripcion_producto' => $producto['descripcion'],
+                'unidad' => $producto['unidad'] ?? 'UND',
+                'kg' => $producto['kg'] ?? 0,
+                'motivo' => $this->limpiar($_POST['motivo']),
+                'cantidad_und' => floatval($_POST['cantidad_und']),
+                'cantidad_kg' => floatval($_POST['cantidad_kg']),
+                'observacion' => $this->limpiar($_POST['observacion']),
+                'usuario_creador' => $_SESSION['user'],
+                'evidencia' => $rutaEvidencia
+            ];
+            
+            // 5. Guardar en la base de datos
+            if ($this->devModel->guardar($datos)) {
+                $_SESSION['alerta'] = [
+                    'tipo' => 'success', 
+                    'msg' => '✅ Devolución registrada correctamente. ID de registro generado.'
+                ];
+            } else {
+                throw new Exception('Error al guardar en la base de datos');
+            }
+            
+        } catch (Exception $e) {
+            $_SESSION['alerta'] = [
+                'tipo' => 'error', 
+                'msg' => '❌ ' . $e->getMessage()
+            ];
+        }
+        
+        // Redirigir de vuelta al formulario
+        header('Location: index.php?url=panel/auxiliar');
+        exit;
+    }
+}
+```
+
+## Field Validation
+
+### Required Fields
+
+All fields must pass validation before submission:
+
+```php controllers/PanelController.php
+private function validarCampos($post) {
+    $camposRequeridos = [
+        'nit' => 'NIT del cliente',
+        'nombre_cliente' => 'Nombre del cliente',
+        'direccion' => 'Dirección',
+        'producto' => 'Producto',
+        'motivo' => 'Motivo',
+        'cantidad_und' => 'Cantidad en unidades',
+        'cantidad_kg' => 'Cantidad en kilogramos',
+        'observacion' => 'Observaciones'
+    ];
+    
+    foreach ($camposRequeridos as $campo => $nombre) {
+        if (empty($post[$campo])) {
+            throw new Exception("El campo '{$nombre}' es obligatorio");
+        }
+    }
+    
+    // Validar que las cantidades sean números positivos
+    if (floatval($post['cantidad_und']) <= 0) {
+        throw new Exception('La cantidad en unidades debe ser mayor a 0');
+    }
+    
+    if (floatval($post['cantidad_kg']) < 0) {
+        throw new Exception('La cantidad en kilogramos no puede ser negativa');
+    }
+}
+```
+
+<Note>
+  The validation ensures data integrity before saving to the database. Invalid submissions display user-friendly error messages.
+</Note>
+
+## Evidence Upload
+
+### File Upload Configuration
+
+The system accepts image files up to 5MB:
+
+```php controllers/PanelController.php
+private function subirEvidencia($archivo) {
+    // Configuración
+    $directorioDestino = 'uploads/evidencias/';
+    $tamañoMaximo = 5 * 1024 * 1024; // 5MB
+    $extensionesPermitidas = ['jpg', 'jpeg', 'png', 'gif'];
+    
+    // Crear directorio si no existe
+    if (!file_exists($directorioDestino)) {
+        mkdir($directorioDestino, 0777, true);
+    }
+    
+    // Validar tamaño
+    if ($archivo['size'] > $tamañoMaximo) {
+        throw new Exception('El archivo excede el tamaño máximo de 5MB');
+    }
+    
+    // Validar extensión
+    $extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
+    if (!in_array($extension, $extensionesPermitidas)) {
+        throw new Exception('Formato de archivo no permitido. Use JPG, PNG o GIF');
+    }
+    
+    // Generar nombre único
+    $nombreArchivo = 'evidencia_' . time() . '_' . uniqid() . '.' . $extension;
+    $rutaCompleta = $directorioDestino . $nombreArchivo;
+    
+    // Mover archivo
+    if (move_uploaded_file($archivo['tmp_name'], $rutaCompleta)) {
+        return $rutaCompleta;
+    } else {
+        throw new Exception('Error al subir el archivo de evidencia');
+    }
+}
+```
+
+<Warning>
+  Ensure the `uploads/evidencias/` directory has proper write permissions (0777) for the web server user.
+</Warning>
+
+### Supported Formats
+
+<Tabs>
+  <Tab title="JPG/JPEG">
+    Standard format for photographs. Recommended for high-quality evidence images.
+  </Tab>
+  <Tab title="PNG">
+    Lossless format ideal for screenshots or images with text.
+  </Tab>
+  <Tab title="GIF">
+    Supported but not recommended due to limited color palette.
+  </Tab>
+</Tabs>
+
+## Database Storage
+
+### Devolucion Model
+
+The `DevolucionModel` handles database operations:
+
+```php models/DevolucionModel.php
+public function guardar($datos) {
+    $sql = "INSERT INTO devoluciones (
+                nit, nombre_cliente, direccion, item_producto, descripcion_producto, 
+                unidad, kg, motivo, cantidad_und, cantidad_kg, 
+                observacion, usuario_creador, estado, fecha_creacion, evidencia
+            ) VALUES (
+                ?, ?, ?, ?, ?, 
+                ?, ?, ?, ?, ?, 
+                ?, ?, 'Pendiente', NOW(), ?
+            )";
+    
+    $stmt = $this->db->prepare($sql);
+    
+    return $stmt->execute([
+        $datos['nit'],
+        $datos['nombre_cliente'],
+        $datos['direccion'],
+        $datos['item_producto'],
+        $datos['descripcion_producto'],
+        $datos['unidad'],
+        $datos['kg'],
+        $datos['motivo'],
+        $datos['cantidad_und'],
+        $datos['cantidad_kg'],
+        $datos['observacion'],
+        $datos['usuario_creador'],
+        $datos['evidencia'] ?? null
+    ]);
+}
+```
+
+### Table Structure
+
+The `devoluciones` table stores all return records:
+
+```sql Script_BD/Script_DB.sql
+CREATE TABLE IF NOT EXISTS devoluciones (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nit VARCHAR(20) NOT NULL,
+    nombre_cliente VARCHAR(255) NOT NULL,
+    direccion TEXT,
+    codigo_producto VARCHAR(50) NOT NULL,
+    descripcion_producto TEXT,
+    unidad VARCHAR(20),
+    kg DECIMAL(10,2),
+    motivo ENUM('devolucion', 'faltante', 'sobrante') NOT NULL,
+    cantidad_und INT,
+    cantidad_kg DECIMAL(10,2),
+    evidencia VARCHAR(255),
+    observacion TEXT,
+    estado ENUM('pendiente', 'aprobado', 'rechazado') DEFAULT 'pendiente',
+    observacion_admin TEXT,
+    codigo_admin VARCHAR(50),
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_revision TIMESTAMP NULL,
+    usuario_creador VARCHAR(50) NOT NULL,
+    usuario_revisor VARCHAR(50)
+);
+```
+
+## Input Sanitization
+
+All text inputs are sanitized to prevent XSS attacks:
+
+```php controllers/PanelController.php
+private function limpiar($texto) {
+    return htmlspecialchars(trim($texto), ENT_QUOTES, 'UTF-8');
+}
+```
+
+## Access Control
+
+Only Admin (Grade 1) and Auxiliary (Grade 2) users can access the registration panel:
+
+```php controllers/PanelController.php
+public function __construct() {
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    
+    // Verificar autenticación
+    if (!isset($_SESSION['logged_in'])) {
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+    
+    // Verificar permisos (Solo Admin Grado 1 o Auxiliar Grado 2)
+    if (!isset($_SESSION['grado']) || ($_SESSION['grado'] != 1 && $_SESSION['grado'] != 2)) {
+        header('Location: index.php?url=home/index');
+        exit;
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Approval Workflow" icon="check-double" href="/features/approval-workflow">
+    Learn how admins review and approve returns
+  </Card>
+  <Card title="Dashboard Analytics" icon="chart-line" href="/features/dashboard-analytics">
+    View return statistics and trends
+  </Card>
+</CardGroup>

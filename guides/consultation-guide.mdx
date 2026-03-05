@@ -1,0 +1,607 @@
+---
+title: 'Consultation User Guide'
+description: 'Complete guide for viewing, searching, and analyzing product return history in DevolutionSync'
+icon: 'magnifying-glass-chart'
+---
+
+## Overview
+
+The Consultation Panel provides read-only access to view the history of product returns, shortages, and surpluses in DevolutionSync. Users with consultation access (Grado 3) or higher can search, filter, and review historical return data.
+
+<Note>
+  **Access Requirements:** All authenticated users can access the consultation panel. Different user grades (Grado 1, 2, 3) may see different interfaces, but the core functionality remains the same.
+</Note>
+
+## Accessing the Consultation Panel
+
+<Steps>
+  <Step title="Log in to DevolutionSync">
+    Navigate to the system login page and enter your credentials. All authenticated users with valid sessions can access consultation features.
+  </Step>
+  
+  <Step title="Navigate to the consultation panel">
+    Access the appropriate URL based on your role:
+    - **Administrator**: `index.php?url=consulta/index`
+    - **Auxiliary**: `index.php?url=consulta/auxiliar`
+    - **Consultation**: Use the consultation link in your navigation menu
+    
+    <Tip>
+      Both URLs share the same view (`Views/admin/consulta.php`) but may have different navigation context.
+    </Tip>
+  </Step>
+  
+  <Step title="View the historical records">
+    The panel displays a table with all historical return records, sorted by creation date (newest first).
+  </Step>
+</Steps>
+
+## Understanding the History Table
+
+The consultation panel displays a comprehensive table with the following columns:
+
+| Column | Description |
+|--------|-------------|
+| **ID** | Unique identifier for the return record (e.g., #1234) |
+| **Fecha** | Date of return creation (format: DD/MM/YYYY) |
+| **Cliente** | Client name from the return record |
+| **Factura** | Invoice number (if available, otherwise displays "N/A") |
+| **Estado** | Current status badge with visual indicator |
+| **Acciones** | Action button to view detailed information |
+
+### Understanding Status Badges
+
+Return records display color-coded status badges:
+
+<CardGroup cols={3}>
+  <Card title="Pendiente" icon="clock">
+    **⏳ Pendiente**
+    
+    Yellow badge indicating the return is awaiting administrator review.
+    
+    - Background: `#fff3cd`
+    - Text color: `#856404`
+    - Status: Not yet processed
+  </Card>
+  
+  <Card title="Aprobado" icon="circle-check">
+    **✅ Aprobado**
+    
+    Green badge indicating the return was approved by an administrator.
+    
+    - Background: `#d4edda`
+    - Text color: `#155724`
+    - Status: Approved
+  </Card>
+  
+  <Card title="Rechazado" icon="circle-xmark">
+    **❌ Rechazado**
+    
+    Red badge indicating the return was rejected by an administrator.
+    
+    - Background: `#f8d7da`
+    - Text color: `#721c24`
+    - Status: Rejected
+  </Card>
+</CardGroup>
+
+### CSS Implementation
+
+Status badges are styled using the following CSS (lines 18-20):
+
+```css
+.badge-estado { 
+    padding: 5px 10px; 
+    border-radius: 15px; 
+    font-size: 12px; 
+    font-weight: bold; 
+    text-transform: uppercase; 
+}
+.estado-pendiente { background: #fff3cd; color: #856404; }
+.estado-completado { background: #d4edda; color: #155724; }
+```
+
+## Viewing Return Details
+
+To view comprehensive information about any return record:
+
+<Steps>
+  <Step title="Click the 'Ver Detalles' button">
+    In the **Acciones** column, click the **"👁️ Ver Detalles"** button for the record you want to review.
+  </Step>
+  
+  <Step title="Wait for details to load">
+    A modal window opens displaying:
+    - **Loading state**: "⌛ Cargando detalles del registro #{id}..."
+    - The system fetches data via AJAX from `index.php?url=consulta/detalles&id={id}`
+  </Step>
+  
+  <Step title="Review the complete information">
+    The modal displays all available information including:
+    - Client information (name and details)
+    - Current status
+    - Observations and notes
+    - Additional fields from the database record
+    
+    The HTML is generated server-side in `ConsultaController::detalles()` (lines 34-58).
+  </Step>
+  
+  <Step title="Download PDF (optional)">
+    Click the **"📥 Descargar PDF"** button to export the return details as a PDF document.
+    
+    - Filename format: `Devolucion_{id}.pdf`
+    - Uses `html2pdf.js` library for conversion
+    - PDF settings: A4 format, portrait orientation, 10mm margins
+  </Step>
+  
+  <Step title="Close the modal">
+    Click the **"Cerrar"** button or click outside the modal to close the details view.
+  </Step>
+</Steps>
+
+## Details Modal Functionality
+
+The details modal is implemented with the following features:
+
+### AJAX Loading
+
+Details are fetched dynamically using JavaScript:
+
+```javascript
+function verDetalles(id) {
+    currentId = id;
+    const modal = document.getElementById('detallesModal');
+    const contenido = document.getElementById('contenidoDetalle');
+    const footer = document.getElementById('modalFooter');
+    
+    modal.style.display = 'block';
+    contenido.innerHTML = '<div style="text-align:center"><p>⌛ Cargando detalles...</p></div>';
+    footer.style.display = 'none';
+
+    fetch(`index.php?url=consulta/detalles&id=${id}`)
+        .then(response => response.json())
+        .then(data => {
+            if(data.success) {
+                contenido.innerHTML = data.html;
+                footer.style.display = 'flex';
+                document.getElementById('modalTitulo').innerText = `Detalles de Devolución #${id}`;
+            } else {
+                contenido.innerHTML = `<div class="alert alert-error">❌ ${data.message}</div>`;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            contenido.innerHTML = '<div class="alert alert-error">❌ Error técnico al recuperar los datos.</div>';
+        });
+}
+```
+
+### Server-Side Response
+
+The controller returns JSON with HTML content:
+
+```php
+public function detalles() {
+    header('Content-Type: application/json');
+    $id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+
+    if ($id > 0) {
+        $data = $this->model->obtenerPorId($id);
+        if ($data) {
+            ob_start();
+            ?>
+            <div class="detalles-container">
+                <h3>👤 Información: <?php echo htmlspecialchars($data['cliente']); ?></h3>
+                <p><strong>Estado:</strong> <?php echo $data['estado']; ?></p>
+                <p><strong>Observaciones:</strong> <?php echo htmlspecialchars($data['observaciones']); ?></p>
+            </div>
+            <?php
+            $html = ob_get_clean();
+            echo json_encode(['success' => true, 'html' => $html]);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'No encontrado']);
+        }
+    }
+    exit;
+}
+```
+
+## PDF Export Functionality
+
+The consultation panel includes built-in PDF export capabilities:
+
+### How PDF Generation Works
+
+<Steps>
+  <Step title="Library integration">
+    The panel uses `html2pdf.js` (v0.10.1) loaded from CDN:
+    ```html
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    ```
+  </Step>
+  
+  <Step title="User triggers export">
+    When you click **"📥 Descargar PDF"**, the `generarPDF()` function is called.
+  </Step>
+  
+  <Step title="PDF configuration">
+    The function configures PDF generation settings:
+    ```javascript
+    const opt = {
+        margin: 10,
+        filename: `Devolucion_${currentId}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    ```
+  </Step>
+  
+  <Step title="Content conversion">
+    The HTML content inside `contenidoDetalle` is converted to PDF format.
+  </Step>
+  
+  <Step title="Download">
+    The browser automatically downloads the PDF with filename `Devolucion_{id}.pdf`.
+  </Step>
+</Steps>
+
+### PDF Export Settings
+
+| Setting | Value | Purpose |
+|---------|-------|----------|
+| **Margin** | 10mm | Space around page edges |
+| **Format** | A4 | Standard paper size (210 × 297 mm) |
+| **Orientation** | Portrait | Vertical page layout |
+| **Image Quality** | 0.98 | High-quality image rendering |
+| **Scale** | 2 | Higher resolution for better quality |
+| **CORS** | Enabled | Load images from external sources |
+
+<Tip>
+  The PDF export maintains the visual styling from the modal, ensuring consistent formatting in the downloaded document.
+</Tip>
+
+## Empty State Handling
+
+If no records exist in the system, the table displays a friendly empty state:
+
+```php
+<?php if(empty($devoluciones)): ?>
+    <tr>
+        <td colspan="6" style="text-align: center;">
+            No hay registros encontrados.
+        </td>
+    </tr>
+<?php endif; ?>
+```
+
+**What this means:**
+- No returns have been registered yet
+- Or the database query returned no results
+- Check with administrators if you expect to see data
+
+## Data Retrieval Process
+
+Understanding how consultation data is fetched:
+
+<Steps>
+  <Step title="Controller initialization">
+    `ConsultaController` is instantiated with session validation:
+    ```php
+    if (!isset($_SESSION['logged_in'])) {
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+    ```
+  </Step>
+  
+  <Step title="Model query">
+    The controller calls `ConsultaModel::obtenerHistorial()`:
+    ```php
+    $devoluciones = $this->model->obtenerHistorial();
+    ```
+  </Step>
+  
+  <Step title="Database query execution">
+    The model executes a SQL query:
+    ```php
+    $stmt = $this->db->prepare(
+        "SELECT * FROM devoluciones ORDER BY fecha_creacion DESC LIMIT ?"
+    );
+    $stmt->bindValue(1, $limite, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    ```
+    
+    Default limit: 100 records (can be customized)
+  </Step>
+  
+  <Step title="View rendering">
+    The data array is passed to the view and rendered in the HTML table.
+  </Step>
+</Steps>
+
+## Statistics Overview
+
+The panel header displays a total count badge:
+
+```html
+<span class="badge" style="background: #6c757d; color: white;">
+    Total: <?php echo count($devoluciones); ?>
+</span>
+```
+
+This shows the total number of records currently displayed in the table.
+
+## Modal Design and Styling
+
+The details modal features a modern, responsive design:
+
+### Modal Structure
+
+```html
+<div id="detallesModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitulo">Detalles de la Devolución</h3>
+            <span class="close" onclick="cerrarModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div id="contenidoDetalle"><!-- Dynamic content --></div>
+            <div id="modalFooter"><!-- Action buttons --></div>
+        </div>
+    </div>
+</div>
+```
+
+### Visual Features
+
+- **Backdrop**: Semi-transparent dark overlay with blur effect
+- **Animation**: Smooth slide-in effect (0.3s ease)
+- **Responsiveness**: 80% width, max 900px
+- **Scrolling**: Max height 75vh with vertical scroll
+- **Rounded corners**: 12px border radius
+- **Shadow**: Elevated card with box-shadow
+
+### Animation Keyframes
+
+```css
+@keyframes slideIn {
+    from { transform: translateY(-30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+```
+
+## Best Practices for Using the Consultation Panel
+
+<Accordion title="Efficient Searching">
+  - Use browser search (Ctrl+F / Cmd+F) to find specific client names or IDs
+  - Note the date format (DD/MM/YYYY) when looking for specific time periods
+  - Check status badges for quick filtering by approval state
+  - Reference invoice numbers for accounting reconciliation
+</Accordion>
+
+<Accordion title="Understanding Return Status">
+  - **Pendiente**: Return awaits administrator review - expect processing soon
+  - **Aprobado**: Return was approved - check approval observations for details
+  - **Rechazado**: Return was rejected - review rejection reason in observations
+  - Track return IDs to monitor progress from submission to resolution
+</Accordion>
+
+<Accordion title="Using PDF Exports">
+  - Export critical records for offline review or archival
+  - PDFs maintain official format for compliance and auditing
+  - Share PDFs with stakeholders who don't have system access
+  - Keep exported PDFs organized by date or status for easy reference
+</Accordion>
+
+<Accordion title="Data Interpretation">
+  - Cross-reference return dates with delivery schedules
+  - Analyze patterns in rejection reasons to improve submission quality
+  - Note which clients have frequent returns for follow-up
+  - Review administrator observations for process improvement insights
+</Accordion>
+
+## Security and Access Control
+
+### Session Validation
+
+The consultation controller verifies user authentication:
+
+```php
+if (session_status() === PHP_SESSION_NONE) session_start();
+
+if (!isset($_SESSION['logged_in'])) {
+    header('Location: index.php?url=auth/index');
+    exit;
+}
+```
+
+- Users must have an active logged-in session
+- No session = automatic redirect to login page
+- All authenticated users can view consultation data
+
+### Read-Only Access
+
+The consultation panel is strictly read-only:
+
+- No edit or delete capabilities
+- No form submissions
+- No data modification permitted
+- Only viewing and exporting allowed
+
+<Note>
+  This design ensures data integrity and provides safe access for users who need visibility without modification rights.
+</Note>
+
+## Error Handling
+
+The system handles various error scenarios gracefully:
+
+### AJAX Request Failures
+
+If the details request fails:
+
+```javascript
+.catch(error => {
+    console.error('Error:', error);
+    contenido.innerHTML = '<div class="alert alert-error">❌ Error técnico al recuperar los datos.</div>';
+});
+```
+
+**Possible causes:**
+- Network connectivity issues
+- Server timeout
+- Invalid return ID
+- Database connection failure
+
+### Record Not Found
+
+If a return ID doesn't exist:
+
+```php
+if ($data) {
+    // Display data
+} else {
+    echo json_encode(['success' => false, 'message' => 'No encontrado']);
+}
+```
+
+**User sees:**
+```
+❌ No encontrado
+```
+
+### Database Errors
+
+The model includes error handling:
+
+```php
+try {
+    $stmt = $this->db->prepare("SELECT * FROM devoluciones...");
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    error_log("Error en ConsultaModel: " . $e->getMessage());
+    return [];
+}
+```
+
+- Errors are logged to server error log
+- Empty array returned to prevent crashes
+- User sees empty table state
+
+## Troubleshooting
+
+### Can't See Any Records
+
+- **Cause**: No returns have been registered, or database is empty
+- **Solution**: Contact administrators to verify data exists. If you're an auxiliary user, try registering a test return.
+
+### Modal Won't Open
+
+- **Cause**: JavaScript errors or browser compatibility issues
+- **Solution**: 
+  - Check browser console for errors (F12)
+  - Ensure JavaScript is enabled
+  - Try refreshing the page
+  - Clear browser cache
+
+### Details Won't Load in Modal
+
+- **Cause**: Network error, invalid ID, or server issue
+- **Solution**:
+  - Check your internet connection
+  - Verify the return ID exists
+  - Try a different record
+  - Contact technical support if issue persists
+
+### PDF Export Not Working
+
+- **Cause**: CDN not accessible, browser compatibility, or popup blocker
+- **Solution**:
+  - Check if cdn.cloudflare.com is accessible
+  - Disable popup/download blockers temporarily
+  - Try a different browser
+  - Check browser console for errors
+
+### Status Badge Colors Wrong
+
+- **Cause**: CSS not loaded or browser caching issue
+- **Solution**: Hard refresh the page (Ctrl+Shift+R / Cmd+Shift+R) to reload styles
+
+### Can't Access Consultation Panel
+
+- **Cause**: Not logged in or session expired
+- **Solution**: 
+  - Navigate back to login page
+  - Re-enter your credentials
+  - If issue persists, contact system administrator
+
+## Advanced Features (Future Development)
+
+The consultation panel includes placeholder functions for future enhancements:
+
+### Filtering
+
+Currently displays a message: "Función de filtrado en desarrollo"
+
+**Planned features:**
+- Filter by status (Pendiente, Aprobado, Rechazado)
+- Filter by date range
+- Filter by client name or NIT
+- Filter by product
+- Filter by return reason
+
+### Export Options
+
+Currently displays a message: "Función de exportación en desarrollo"
+
+**Planned features:**
+- Export full table to Excel/CSV
+- Export filtered results
+- Export date range summaries
+- Scheduled report generation
+
+## Understanding the Database Query
+
+The consultation panel retrieves data using:
+
+```sql
+SELECT * FROM devoluciones 
+ORDER BY fecha_creacion DESC 
+LIMIT ?
+```
+
+**Query explanation:**
+- **SELECT ***: Fetches all columns from the table
+- **ORDER BY fecha_creacion DESC**: Sorts by creation date, newest first
+- **LIMIT ?**: Restricts results (default 100 records)
+
+**Table fields returned:**
+- `id` - Unique identifier
+- `nit` - Client tax ID
+- `nombre_cliente` - Client name
+- `direccion` - Delivery address
+- `item_producto` - Product item code
+- `descripcion_producto` - Product description
+- `unidad` - Unit of measurement
+- `kg` - Weight per unit
+- `motivo` - Return reason
+- `cantidad_und` - Quantity in units
+- `cantidad_kg` - Quantity in kilograms
+- `observacion` - User observations
+- `usuario_creador` - Username who created the return
+- `estado` - Current status
+- `fecha_creacion` - Creation timestamp
+- `evidencia` - Path to evidence photo
+- `codigo_admin` - Administrator authorization code
+- `observacion_admin` - Administrator observations
+- `usuario_revisor` - Username who reviewed
+- `fecha_revision` - Review timestamp
+
+## Related Resources
+
+- [Administrator Guide](/guides/admin-guide) - Learn how to review and approve returns
+- [Auxiliary User Guide](/guides/auxiliary-guide) - Learn how to register new returns
+- [API Reference](/api/consulta-controller) - Technical controller documentation
+- [Database Schema](/technical/database-schema) - Complete table structure

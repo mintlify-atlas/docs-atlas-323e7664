@@ -1,0 +1,325 @@
+---
+title: 'ProductoModel'
+description: 'Product catalog model for managing the producto database table'
+---
+
+## Overview
+
+The `ProductoModel` class provides simple read-only access to the product catalog stored in the `producto` database table. It supports listing all available products and retrieving individual product details by item code.
+
+**Database Table**: `producto`
+
+**Key Responsibilities**:
+- List all products for selection interfaces
+- Retrieve product details by item code
+- Provide product information for return registration
+
+<Note>
+  This model only implements read operations. Product catalog management (create, update, delete) is handled through separate administrative interfaces not included in the DevolutionSync core.
+</Note>
+
+---
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the model and establishes database connection using `Conexion::Conectar()`.
+
+---
+
+## Methods
+
+### listarTodos()
+
+```php
+public function listarTodos()
+```
+
+Retrieves all products from the catalog, ordered alphabetically by description. Used to populate product selection dropdowns and autocomplete interfaces when auxiliary users register returns.
+
+**Returns**: `array` - Array of associative arrays with the following structure:
+
+<ResponseField name="item" type="string">
+  Product item code (unique identifier)
+</ResponseField>
+
+<ResponseField name="descripcion" type="string">
+  Product description or name
+</ResponseField>
+
+<CodeGroup>
+```php SQL Query
+SELECT item, descripcion 
+FROM producto 
+ORDER BY descripcion ASC
+```
+
+```php Usage Example
+$model = new ProductoModel();
+$productos = $model->listarTodos();
+
+// Populate a dropdown
+foreach ($productos as $producto) {
+    echo "<option value='{$producto['item']}'>";
+    echo "{$producto['descripcion']}";
+    echo "</option>\n";
+}
+```
+
+```php JSON API Response
+$model = new ProductoModel();
+$productos = $model->listarTodos();
+
+header('Content-Type: application/json');
+echo json_encode([
+    'success' => true,
+    'productos' => $productos
+]);
+
+// Output:
+// {
+//   "success": true,
+//   "productos": [
+//     {"item": "PROD001", "descripcion": "Pan Tajado Integral 500g"},
+//     {"item": "PROD002", "descripcion": "Pan Tajado Tradicional 500g"},
+//     {"item": "PROD003", "descripcion": "Torta de Vainilla 1kg"}
+//   ]
+// }
+```
+</CodeGroup>
+
+---
+
+### obtenerPorItem()
+
+```php
+public function obtenerPorItem($item)
+```
+
+Retrieves detailed information for a specific product by its item code. Used to auto-fill product description when an auxiliary user enters or selects an item code during return registration.
+
+<ParamField path="item" type="string" required>
+  The product item code to search for (e.g., "PROD001")
+</ParamField>
+
+**Returns**: `array|false` - Associative array with product data, or `false` if not found
+
+<ResponseField name="item" type="string">
+  Product item code (matches the search parameter)
+</ResponseField>
+
+<ResponseField name="descripcion" type="string">
+  Product description or name
+</ResponseField>
+
+<CodeGroup>
+```php SQL Query
+SELECT item, descripcion 
+FROM producto 
+WHERE item = ?
+```
+
+```php Usage Example
+$model = new ProductoModel();
+$producto = $model->obtenerPorItem('PROD001');
+
+if ($producto) {
+    echo "Item: {$producto['item']}\n";
+    echo "Descripción: {$producto['descripcion']}\n";
+} else {
+    echo "Producto no encontrado\n";
+}
+```
+
+```php AJAX Autocomplete Handler
+// Controllers/ProductoController.php
+$itemCode = $_GET['item'] ?? '';
+
+if (!empty($itemCode)) {
+    $model = new ProductoModel();
+    $producto = $model->obtenerPorItem($itemCode);
+    
+    if ($producto) {
+        echo json_encode([
+            'success' => true,
+            'producto' => $producto
+        ]);
+    } else {
+        echo json_encode([
+            'success' => false,
+            'mensaje' => 'Producto no encontrado'
+        ]);
+    }
+}
+```
+</CodeGroup>
+
+<Warning>
+  This method returns `false` (not `null`) when no product is found. Always use explicit boolean checks (`if ($producto)` or `if ($producto !== false)`) to handle missing products correctly.
+</Warning>
+
+---
+
+## Database Schema
+
+**Table**: `producto`
+
+The `producto` table contains the complete product catalog with inventory control fields:
+
+| Column | Type | Description | Used by Model |
+|--------|------|-------------|---------------|
+| `id` | INT (PK, AUTO_INCREMENT) | Primary key | No |
+| `item` | VARCHAR (UNIQUE) | Product item code | Yes |
+| `descripcion` | VARCHAR | Product name/description | Yes |
+| `minimo` | DECIMAL | Minimum inventory level | No |
+| `maximo` | DECIMAL | Maximum inventory level | No |
+| `pesoProm` | DECIMAL | Average weight per unit | No |
+
+<Accordion title="Why are inventory fields not exposed?">
+  The `ProductoModel` class intentionally excludes `minimo`, `maximo`, and `pesoProm` fields because:
+  
+  1. **Return registration doesn't require inventory data** - Auxiliary users only need to identify the product (item + descripcion)
+  2. **Separation of concerns** - Inventory management is handled by separate warehouse systems
+  3. **Simplified API** - Reduces payload size and complexity for frontend interfaces
+  4. **Data privacy** - Internal inventory targets are not exposed to all auxiliary users
+  
+  If your implementation requires weight calculations (e.g., auto-calculating `cantidad_kg` from `pesoProm` × `cantidad_und`), you can extend the model:
+  
+  ```php
+  public function obtenerConPeso($item) {
+      $stmt = $this->db->prepare("SELECT item, descripcion, pesoProm FROM producto WHERE item = ?");
+      $stmt->execute([$item]);
+      return $stmt->fetch();
+  }
+  ```
+</Accordion>
+
+---
+
+## Integration with DevolucionModel
+
+The `ProductoModel` is typically used in conjunction with `DevolucionModel` during the return registration workflow:
+
+```php
+// Step 1: Load product catalog for selection
+$productoModel = new ProductoModel();
+$productos = $productoModel->listarTodos();
+
+// User selects a product by item code
+$itemSeleccionado = 'PROD001';
+
+// Step 2: Retrieve product details
+$producto = $productoModel->obtenerPorItem($itemSeleccionado);
+
+if (!$producto) {
+    die('Producto no encontrado');
+}
+
+// Step 3: Use product data in return registration
+$devolucionModel = new DevolucionModel();
+$datos = [
+    'item_producto' => $producto['item'],
+    'descripcion_producto' => $producto['descripcion'],
+    // ... other return data
+];
+
+$devolucionModel->guardar($datos);
+```
+
+---
+
+## Frontend Integration Examples
+
+### Select Dropdown with All Products
+
+```html
+<select id="producto" name="item_producto" required>
+    <option value="">-- Seleccione un producto --</option>
+    <?php
+    $model = new ProductoModel();
+    $productos = $model->listarTodos();
+    foreach ($productos as $p) {
+        echo "<option value='{$p['item']}'>{$p['descripcion']}</option>";
+    }
+    ?>
+</select>
+```
+
+### AJAX Autocomplete
+
+```javascript
+// Frontend JavaScript
+const itemInput = document.getElementById('item_producto');
+const descripcionInput = document.getElementById('descripcion_producto');
+
+itemInput.addEventListener('blur', async function() {
+    const item = this.value.trim();
+    if (!item) return;
+    
+    const response = await fetch(`/api/productos.php?item=${item}`);
+    const data = await response.json();
+    
+    if (data.success) {
+        descripcionInput.value = data.producto.descripcion;
+    } else {
+        alert('Producto no encontrado');
+        this.value = '';
+    }
+});
+```
+
+```php
+// Backend API: api/productos.php
+require_once '../Models/ProductoModel.php';
+
+$item = $_GET['item'] ?? '';
+$model = new ProductoModel();
+$producto = $model->obtenerPorItem($item);
+
+header('Content-Type: application/json');
+if ($producto) {
+    echo json_encode(['success' => true, 'producto' => $producto]);
+} else {
+    echo json_encode(['success' => false, 'mensaje' => 'Producto no encontrado']);
+}
+```
+
+---
+
+## Performance Considerations
+
+<Note>
+  **Caching Recommendation**: Since product catalogs are relatively static, consider implementing caching for `listarTodos()` results:
+  
+  ```php
+  public function listarTodos() {
+      // Check cache first
+      $cacheKey = 'productos_todos';
+      $cached = apcu_fetch($cacheKey);
+      if ($cached !== false) {
+          return $cached;
+      }
+      
+      // Fetch from database
+      $stmt = $this->db->prepare("SELECT item, descripcion FROM producto ORDER BY descripcion ASC");
+      $stmt->execute();
+      $result = $stmt->fetchAll();
+      
+      // Store in cache for 1 hour
+      apcu_store($cacheKey, $result, 3600);
+      return $result;
+  }
+  ```
+  
+  This reduces database load when multiple users register returns simultaneously.
+</Note>
+
+---
+
+## Related Models
+
+- [DevolucionModel](/api/devolucion-model) - Uses product data for return registration
+- [UsuarioModel](/api/usuario-model) - User management for product catalog access

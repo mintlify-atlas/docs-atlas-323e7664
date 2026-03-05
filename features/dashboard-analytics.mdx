@@ -1,0 +1,405 @@
+---
+title: 'Dashboard & Analytics'
+description: 'Real-time statistics, status breakdowns, and historical trend analysis'
+icon: 'chart-line'
+---
+
+## Overview
+
+The DevolutionSync dashboard provides comprehensive analytics for product returns, displaying real-time statistics filtered by date with breakdowns by status, return type, and quantities. All users can access the dashboard with role-appropriate data visibility.
+
+<CardGroup cols={4}>
+  <Card title="Total Returns" icon="box">
+    Complete count by date
+  </Card>
+  <Card title="Status Breakdown" icon="list-check">
+    Pending, approved, rejected
+  </Card>
+  <Card title="Motivo Analysis" icon="tags">
+    Returns, shortages, overages
+  </Card>
+  <Card title="Quantities" icon="weight-scale">
+    Units and kilograms tracked
+  </Card>
+</CardGroup>
+
+## Dashboard Access
+
+All authenticated users can access the dashboard:
+
+```php controllers/HomeController.php
+public function __construct() {
+    // Iniciamos sesión si no está iniciada
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    
+    // Verificamos autenticación
+    if (!isset($_SESSION['logged_in'])) {
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+    
+    // Usamos DevolucionModel que ya tiene la lógica de estadísticas centralizada
+    $this->model = new DevolucionModel();
+}
+```
+
+<Note>
+  Unlike other features, the dashboard is accessible to all user roles (Admin, Auxiliary, and Consultation).
+</Note>
+
+## Date Filtering
+
+### Filter Implementation
+
+The dashboard supports date-based filtering:
+
+```php controllers/HomeController.php
+public function index() {
+    // Capturar fecha del filtro o usar la actual
+    $fechaFiltro = $_GET['fecha'] ?? date('Y-m-d');
+    
+    // 1. Obtener estadísticas del día seleccionado
+    $statsHoy = $this->model->obtenerEstadisticas($fechaFiltro);
+    
+    // 2. Obtener estadísticas históricas (sin pasar fecha)
+    $statsGeneral = $this->model->obtenerEstadisticas();
+    
+    // 3. Obtener fechas disponibles para el select
+    $fechas = $this->model->obtenerFechas();
+
+    $titulo = "Dashboard General - DevolutionSync";
+    require_once 'Views/home/dashboard.php';
+}
+```
+
+### Date Selector Interface
+
+The view provides a dropdown to select dates:
+
+```php views/home/dashboard.php
+<form method="GET" action="index.php" class="date-selector">
+    <input type="hidden" name="url" value="home/index">
+    <label for="fecha">Seleccionar Fecha:</label>
+    <select name="fecha" id="fecha" onchange="this.form.submit()">
+        <?php foreach ($fechas as $f): ?>
+            <option value="<?php echo $f; ?>" <?php echo ($fechaFiltro == $f) ? 'selected' : ''; ?>>
+                <?php echo date('d/m/Y', strtotime($f)); ?>
+            </option>
+        <?php endforeach; ?>
+    </select>
+    <button type="submit">Actualizar</button>
+</form>
+```
+
+## Statistics Query
+
+### Core Statistics Method
+
+The `obtenerEstadisticas()` method generates comprehensive analytics:
+
+```php models/DevolucionModel.php
+public function obtenerEstadisticas($fecha = null) {
+    $where = $fecha ? "WHERE DATE(fecha_creacion) = :fecha" : "";
+    
+    // Usamos COALESCE para que devuelva 0 en vez de NULL si no hay datos
+    $sql = "SELECT 
+                COUNT(*) as total,
+                COALESCE(SUM(cantidad_kg), 0) as total_kg,
+                COALESCE(SUM(cantidad_und), 0) as total_und,
+                
+                -- Conteo por Estados
+                COUNT(CASE WHEN estado = 'Pendiente' THEN 1 END) as pendientes,
+                COUNT(CASE WHEN estado = 'Aprobado' THEN 1 END) as aprobados,
+                COUNT(CASE WHEN estado = 'Rechazado' THEN 1 END) as rechazados,
+                
+                -- Conteo por Motivos
+                COUNT(CASE WHEN motivo = 'Devolucion' THEN 1 END) as motivo_dev,
+                COUNT(CASE WHEN motivo = 'Faltante' THEN 1 END) as motivo_fal,
+                COUNT(CASE WHEN motivo = 'Sobrante' THEN 1 END) as motivo_sob
+            FROM devoluciones 
+            $where";
+
+    $stmt = $this->db->prepare($sql);
+    if ($fecha) $stmt->bindValue(':fecha', $fecha);
+    $stmt->execute();
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+```
+
+<Tabs>
+  <Tab title="With Date Filter">
+    When `$fecha` is provided, the query includes `WHERE DATE(fecha_creacion) = :fecha` to return statistics for a specific day.
+  </Tab>
+  <Tab title="Without Date Filter">
+    When `$fecha` is `null`, the query returns aggregate statistics across all dates in the database.
+  </Tab>
+</Tabs>
+
+### Available Dates Query
+
+```php models/DevolucionModel.php
+public function obtenerFechas() {
+    $stmt = $this->db->query("SELECT DISTINCT DATE(fecha_creacion) as fecha FROM devoluciones ORDER BY fecha DESC");
+    return $stmt->fetchAll(PDO::FETCH_COLUMN);
+}
+```
+
+## Dashboard Metrics
+
+### Primary Indicators
+
+The dashboard displays six primary metrics:
+
+<Steps>
+  <Step title="Total Returns">
+    Complete count of all returns for the selected date.
+    
+    ```php
+    $statsHoy['total_dev'] ?? 0
+    ```
+  </Step>
+  
+  <Step title="Return Type: Devolucion">
+    Count of returns with motivo = 'Devolucion'.
+    
+    ```php
+    $statsHoy['motivo_dev'] ?? 0
+    ```
+  </Step>
+  
+  <Step title="Return Type: Faltante">
+    Count of returns with motivo = 'Faltante'.
+    
+    ```php
+    $statsHoy['motivo_fal'] ?? 0
+    ```
+  </Step>
+  
+  <Step title="Return Type: Sobrante">
+    Count of returns with motivo = 'Sobrante'.
+    
+    ```php
+    $statsHoy['motivo_sob'] ?? 0
+    ```
+  </Step>
+  
+  <Step title="Total Kilograms">
+    Sum of all `cantidad_kg` values.
+    
+    ```php
+    number_format($statsHoy['total_kg'] ?? 0, 2)
+    ```
+  </Step>
+  
+  <Step title="Total Units">
+    Sum of all `cantidad_und` values.
+    
+    ```php
+    number_format($statsHoy['total_und'] ?? 0, 0)
+    ```
+  </Step>
+</Steps>
+
+### Status Breakdown
+
+The dashboard shows return distribution by approval status:
+
+```php views/home/dashboard.php
+<div class="general-stats">
+    <h3>Estado de Devoluciones - <?php echo date('d/m/Y', strtotime($fechaFiltro)); ?></h3>
+    <div class="stats-grid">
+        <div class="stat-item">
+            <div class="stat-value"><?php echo $statsHoy['pendientes'] ?? 0; ?></div>
+            <div class="stat-label">Pendientes</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value"><?php echo $statsHoy['aprobadas'] ?? 0; ?></div>
+            <div class="stat-label">Aprobadas</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value"><?php echo $statsHoy['rechazadas'] ?? 0; ?></div>
+            <div class="stat-label">Rechazadas</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">
+                <?php 
+                $totalRevisadas = ($statsHoy['aprobadas'] ?? 0) + ($statsHoy['rechazadas'] ?? 0);
+                $totalDev = $statsHoy['total_dev'] ?? 0;
+                $porcentaje = $totalDev > 0 ? round(($totalRevisadas / $totalDev) * 100, 1) : 0;
+                echo $porcentaje . '%';
+                ?>
+            </div>
+            <div class="stat-label">Revisadas</div>
+        </div>
+    </div>
+</div>
+```
+
+<Note>
+  The "Revisadas" percentage is calculated as `(aprobadas + rechazadas) / total * 100`, showing the review completion rate.
+</Note>
+
+## Historical Overview
+
+The dashboard includes aggregate statistics across all dates:
+
+```php views/home/dashboard.php
+<div class="general-stats">
+    <h3>Resumen General (Todas las Fechas)</h3>
+    <div class="stats-grid">
+        <div class="stat-item">
+            <div class="stat-value"><?php echo $statsGeneral['total_dev'] ?? 0; ?></div>
+            <div class="stat-label">Total Devoluciones</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value"><?php echo $statsGeneral['aprobadas'] ?? 0; ?></div>
+            <div class="stat-label">Total Aprobadas</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value"><?php echo $statsGeneral['rechazadas'] ?? 0; ?></div>
+            <div class="stat-label">Total Rechazadas</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value"><?php echo number_format($statsGeneral['total_kg'] ?? 0, 2); ?></div>
+            <div class="stat-label">Total KG General</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value"><?php echo number_format($statsGeneral['total_und'] ?? 0, 0); ?></div>
+            <div class="stat-label">Total UND General</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value"><?php echo count($fechas); ?></div>
+            <div class="stat-label">Días con Actividad</div>
+        </div>
+    </div>
+</div>
+```
+
+## Real-Time Updates
+
+The dashboard displays real-time data with visual indicators:
+
+```php views/home/dashboard.php
+<div class="current-date">
+    <strong>Mostrando datos para:</strong> 
+    <?php 
+    if ($fechaFiltro == date('Y-m-d')) {
+        echo "<strong>HOY - " . date('d/m/Y') . "</strong>";
+    } else {
+        echo date('d/m/Y', strtotime($fechaFiltro));
+    }
+    ?>
+</div>
+```
+
+```php views/home/dashboard.php
+<?php if ($fechaFiltro == date('Y-m-d')): ?>
+    <div class="indicator-trend trend-positive">En tiempo real</div>
+<?php else: ?>
+    <div class="indicator-trend trend-neutral">Datos históricos</div>
+<?php endif; ?>
+```
+
+## Data Aggregation
+
+### SQL Aggregation Techniques
+
+The statistics query uses advanced SQL features:
+
+<AccordionGroup>
+  <Accordion title="COALESCE for NULL Handling">
+    ```sql
+    COALESCE(SUM(cantidad_kg), 0) as total_kg
+    ```
+    
+    Returns `0` instead of `NULL` when no records exist, preventing PHP errors.
+  </Accordion>
+  
+  <Accordion title="Conditional Aggregation">
+    ```sql
+    COUNT(CASE WHEN estado = 'Pendiente' THEN 1 END) as pendientes
+    ```
+    
+    Counts only records matching the condition in a single query pass.
+  </Accordion>
+  
+  <Accordion title="Date Filtering">
+    ```sql
+    WHERE DATE(fecha_creacion) = :fecha
+    ```
+    
+    Extracts the date portion of the timestamp for accurate day-based filtering.
+  </Accordion>
+</AccordionGroup>
+
+## Performance Optimization
+
+<CardGroup cols={2}>
+  <Card title="Single Query Design" icon="bolt">
+    All statistics are retrieved in one SQL query using conditional aggregation, minimizing database round trips.
+  </Card>
+  <Card title="Indexed Dates" icon="database">
+    The `fecha_creacion` column should have an index for fast date-based filtering:
+    ```sql
+    CREATE INDEX idx_fecha ON devoluciones(fecha_creacion);
+    ```
+  </Card>
+  <Card title="Date Caching" icon="clock">
+    Available dates are queried separately and cached in the view, avoiding repeated queries.
+  </Card>
+  <Card title="NULL Coalescing" icon="shield-check">
+    Using `COALESCE` in SQL prevents NULL propagation and simplifies PHP logic.
+  </Card>
+</CardGroup>
+
+## Indicator Grid
+
+The dashboard uses a responsive grid layout:
+
+```php views/home/dashboard.php
+<div class="indicators-grid">
+    <div class="indicator-card border-blue">
+        <div class="date-badge">FECHA SELECCIONADA</div>
+        <div class="indicator-icon">📦</div>
+        <div class="indicator-value"><?php echo $statsHoy['total_dev'] ?? 0; ?></div>
+        <div class="indicator-label">Total Devoluciones</div>
+        <?php if ($fechaFiltro == date('Y-m-d')): ?>
+            <div class="indicator-trend trend-positive">En tiempo real</div>
+        <?php else: ?>
+            <div class="indicator-trend trend-neutral">Datos históricos</div>
+        <?php endif; ?>
+    </div>
+    <!-- Additional cards... -->
+</div>
+```
+
+## Analytics Use Cases
+
+<Tabs>
+  <Tab title="Daily Monitoring">
+    Track today's returns in real-time to identify unusual patterns or spikes requiring immediate attention.
+  </Tab>
+  <Tab title="Historical Analysis">
+    Compare specific dates to identify trends, seasonal patterns, or anomalies in return behavior.
+  </Tab>
+  <Tab title="Performance Metrics">
+    Monitor the percentage of reviewed returns to measure admin team responsiveness.
+  </Tab>
+  <Tab title="Inventory Impact">
+    Sum total kilograms and units to assess the magnitude of returns on inventory levels.
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Authentication" icon="shield-halved" href="/features/authentication">
+    Learn about role-based access control
+  </Card>
+  <Card title="Return Management" icon="box-open" href="/features/return-management">
+    Understand the return registration process
+  </Card>
+  <Card title="Approval Workflow" icon="check-double" href="/features/approval-workflow">
+    Review the admin approval system
+  </Card>
+</CardGroup>

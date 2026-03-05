@@ -1,0 +1,574 @@
+---
+title: 'Database Schema'
+description: 'Complete MySQL database structure, relationships, and data models for DevolutionSync'
+icon: 'database'
+---
+
+## Overview
+
+DevolutionSync uses MySQL 8.0 as its relational database system. The schema is designed to handle product returns, deviations, user management, and audit trails with proper normalization and referential integrity.
+
+## Database Information
+
+<CardGroup cols={3}>
+  <Card title="Database Name" icon="server">
+    `devolutionsync`
+  </Card>
+  <Card title="Character Set" icon="language">
+    `utf8`
+  </Card>
+  <Card title="Tables" icon="table">
+    5 tables
+  </Card>
+</CardGroup>
+
+## Entity Relationship Overview
+
+```
+┌─────────────────┐
+│    usuarios     │
+│  (USR: PK)      │
+└────────┬────────┘
+         │ 1:N
+         │
+         ▼
+┌─────────────────────────────┐
+│      devoluciones           │
+│  • id (PK)                  │
+│  • usuario_creador (FK)     │──┐
+│  • usuario_revisor (FK)     │  │
+│  • estado (ENUM)            │  │
+│  • motivo (ENUM)            │  │
+└──────────┬──────────────────┘  │ 1:N
+           │ 1:N                 │
+           │                     ▼
+           │            ┌─────────────────┐
+           └───────────>│ notificaciones  │
+                        │ • id (PK)       │
+                        │ • id_devolucion │
+                        └─────────────────┘
+
+┌─────────────────┐
+│  login_attempts │
+│  (Security)     │
+└─────────────────┘
+
+┌─────────────────┐
+│    producto     │
+│  (Catalog)      │
+└─────────────────┘
+```
+
+## Table Definitions
+
+### devoluciones
+
+Core table storing all product return and deviation records.
+
+```sql Script_DB.sql
+CREATE TABLE IF NOT EXISTS devoluciones (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nit VARCHAR(20) NOT NULL,
+    nombre_cliente VARCHAR(255) NOT NULL,
+    direccion TEXT,
+    codigo_producto VARCHAR(50) NOT NULL,
+    descripcion_producto TEXT,
+    unidad VARCHAR(20),
+    kg DECIMAL(10,2),
+    motivo ENUM('devolucion', 'faltante', 'sobrante') NOT NULL,
+    cantidad_und INT,
+    cantidad_kg DECIMAL(10,2),
+    evidencia VARCHAR(255),
+    observacion TEXT,
+    estado ENUM('pendiente', 'aprobado', 'rechazado') DEFAULT 'pendiente',
+    observacion_admin TEXT,
+    codigo_admin VARCHAR(50),
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_revision TIMESTAMP NULL,
+    usuario_creador VARCHAR(50) NOT NULL,
+    usuario_revisor VARCHAR(50)
+);
+```
+
+#### Field Descriptions
+
+<AccordionGroup>
+  <Accordion title="Customer Information">
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `nit` | VARCHAR(20) | Customer tax identification number |
+    | `nombre_cliente` | VARCHAR(255) | Customer full name |
+    | `direccion` | TEXT | Customer delivery address |
+  </Accordion>
+
+  <Accordion title="Product Information">
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `codigo_producto` | VARCHAR(50) | Product SKU/code |
+    | `descripcion_producto` | TEXT | Product description |
+    | `unidad` | VARCHAR(20) | Unit of measure (e.g., "UND", "KG") |
+    | `kg` | DECIMAL(10,2) | Product weight in kilograms |
+  </Accordion>
+
+  <Accordion title="Deviation Details">
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `motivo` | ENUM | Reason: `devolucion`, `faltante`, `sobrante` |
+    | `cantidad_und` | INT | Quantity in units |
+    | `cantidad_kg` | DECIMAL(10,2) | Quantity in kilograms |
+    | `evidencia` | VARCHAR(255) | File path to uploaded evidence |
+    | `observacion` | TEXT | Initial observations from creator |
+  </Accordion>
+
+  <Accordion title="Review Information">
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `estado` | ENUM | Status: `pendiente`, `aprobado`, `rechazado` |
+    | `observacion_admin` | TEXT | Administrator's review comments |
+    | `codigo_admin` | VARCHAR(50) | Authorization code from admin |
+    | `usuario_revisor` | VARCHAR(50) | Username who reviewed (FK to usuarios) |
+    | `fecha_revision` | TIMESTAMP | Date/time of review |
+  </Accordion>
+
+  <Accordion title="Audit Trail">
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `id` | INT | Auto-increment primary key |
+    | `fecha_creacion` | TIMESTAMP | Automatic creation timestamp |
+    | `usuario_creador` | VARCHAR(50) | Username who created record (FK to usuarios) |
+  </Accordion>
+</AccordionGroup>
+
+#### Estado Enum Values
+
+<CodeGroup>
+```sql Pending State
+'pendiente' -- Default state when deviation is created
+           -- Waiting for administrator review
+```
+
+```sql Approved State
+'aprobado' -- Administrator approved the deviation
+          -- Customer notified via email
+          -- Can be exported to reports
+```
+
+```sql Rejected State
+'rechazado' -- Administrator rejected the deviation
+           -- Requires admin observations
+           -- Customer notified with reasons
+```
+</CodeGroup>
+
+#### Motivo Enum Values
+
+<Tabs>
+  <Tab title="devolucion">
+    **Product Return**: Customer returning product due to defects, quality issues, or order errors.
+    
+    Common scenarios:
+    - Damaged goods
+    - Wrong product delivered
+    - Quality not meeting specifications
+  </Tab>
+  
+  <Tab title="faltante">
+    **Shortage**: Delivered quantity less than ordered/invoiced amount.
+    
+    Common scenarios:
+    - Missing units in delivery
+    - Weight discrepancy (less than expected)
+    - Incomplete orders
+  </Tab>
+  
+  <Tab title="sobrante">
+    **Surplus**: Delivered quantity exceeds ordered/invoiced amount.
+    
+    Common scenarios:
+    - Extra units delivered
+    - Weight excess
+    - Over-shipment errors
+  </Tab>
+</Tabs>
+
+### usuarios
+
+User authentication and role management table.
+
+```sql Script_DB.sql
+CREATE TABLE `usuarios` (
+    `USR` VARCHAR(50) NOT NULL,
+    `PAS` VARCHAR(50) NOT NULL,
+    `NOMBRE` VARCHAR(100) NOT NULL,
+    `GRADO` INT NOT NULL,
+    PRIMARY KEY (`USR`)
+)
+```
+
+#### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `USR` | VARCHAR(50) | Username (Primary Key) |
+| `PAS` | VARCHAR(50) | Password (plaintext - should be hashed in production) |
+| `NOMBRE` | VARCHAR(100) | Full name of user |
+| `GRADO` | INT | Role level: 1=Admin, 2=Auxiliary, 3=Consultant |
+
+#### User Roles (GRADO)
+
+<CardGroup cols={3}>
+  <Card title="Administrator" icon="user-tie">
+    **GRADO = 1**
+    
+    - Review deviations
+    - Approve/reject requests
+    - View all records
+    - Access dashboard
+  </Card>
+  
+  <Card title="Auxiliary" icon="user">
+    **GRADO = 2**
+    
+    - Create deviations
+    - Upload evidence
+    - View own records
+    - Limited access
+  </Card>
+  
+  <Card title="Consultant" icon="user-clock">
+    **GRADO = 3**
+    
+    - Read-only access
+    - View history
+    - Search records
+    - No modifications
+  </Card>
+</CardGroup>
+
+#### Sample Data
+
+```sql Script_DB.sql
+INSERT INTO `usuarios` (`USR`, `PAS`, `NOMBRE`, `GRADO`) VALUES 
+    ('ANALISTA', '1088350785', 'SEBASTIAN OBANDO', 1),
+    ('AUXILIAR', '895623', 'AUXILIAR', 2),
+    ('CONSULTA', '895623', 'CONSULTA', 3);
+```
+
+<Warning>
+Passwords are stored in plaintext in the current implementation. **Production systems should use password_hash() and password_verify()** with bcrypt or Argon2.
+</Warning>
+
+### notificaciones
+
+Notification system for user alerts and status updates.
+
+```sql Script_DB.sql
+CREATE TABLE IF NOT EXISTS notificaciones (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_devolucion INT NOT NULL,
+    mensaje TEXT NOT NULL,
+    leida BOOLEAN DEFAULT FALSE,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usuario_destino VARCHAR(50) NOT NULL,
+    FOREIGN KEY (id_devolucion) REFERENCES devoluciones(id)
+);
+```
+
+#### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | INT | Auto-increment primary key |
+| `id_devolucion` | INT | Foreign key to devoluciones table |
+| `mensaje` | TEXT | Notification message content |
+| `leida` | BOOLEAN | Read status (FALSE = unread) |
+| `fecha` | TIMESTAMP | Notification creation timestamp |
+| `usuario_destino` | VARCHAR(50) | Target user (FK to usuarios.USR) |
+
+#### Foreign Key Relationship
+
+```sql
+FOREIGN KEY (id_devolucion) REFERENCES devoluciones(id)
+```
+
+<Note>
+Notifications are automatically created when:
+- Administrator approves a deviation
+- Administrator rejects a deviation
+- Status changes require user attention
+</Note>
+
+### login_attempts
+
+Security table tracking failed login attempts for brute-force protection.
+
+```sql Script_DB.sql
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    ip_address VARCHAR(45) NOT NULL,
+    username VARCHAR(50) NOT NULL,
+    attempts INT DEFAULT 0,
+    last_attempt DATETIME,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | INT | Auto-increment primary key |
+| `ip_address` | VARCHAR(45) | Client IP address (supports IPv6) |
+| `username` | VARCHAR(50) | Attempted username |
+| `attempts` | INT | Number of failed attempts |
+| `last_attempt` | DATETIME | Timestamp of most recent attempt |
+| `created_at` | TIMESTAMP | First attempt timestamp |
+
+#### Security Features
+
+<Steps>
+  <Step title="Track Failed Logins">
+    Record IP address and username for each failed login attempt
+  </Step>
+  <Step title="Increment Counter">
+    Increase attempt counter for each failure
+  </Step>
+  <Step title="Enforce Lockout">
+    Block login after threshold (e.g., 5 attempts)
+  </Step>
+  <Step title="Time-Based Reset">
+    Clear attempts after cooldown period
+  </Step>
+</Steps>
+
+### producto
+
+Product catalog with item codes, descriptions, and specifications.
+
+```sql Script_DB.sql
+CREATE TABLE producto (
+    id INT(11) NOT NULL PRIMARY KEY,
+    item INT(11) NOT NULL,
+    description VARCHAR(50) NOT NULL,
+    minimo FLOAT NOT NULL,
+    maximo FLOAT NOT NULL,
+    pesoProm FLOAT NOT NULL
+);
+```
+
+#### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | INT(11) | Auto-increment primary key |
+| `item` | INT(11) | Product item code/SKU |
+| `descripcion` | VARCHAR(50) | Product description |
+| `minimo` | FLOAT | Minimum acceptable weight |
+| `maximo` | FLOAT | Maximum acceptable weight |
+| `pesoProm` | FLOAT | Average/standard weight |
+
+#### Sample Data
+
+```sql Script_DB.sql
+INSERT INTO `producto` (`id`, `Item`, `descripcion`, `minimo`, `maximo`, `pesoProm`) 
+VALUES (1, 15440, 'ALAS MR CONG BLS', 4, 6, 5);
+```
+
+<Note>
+The `minimo`, `maximo`, and `pesoProm` fields are used for weight validation when creating deviations. They help identify if reported quantities fall within acceptable ranges.
+</Note>
+
+## Indexes and Constraints
+
+### Primary Keys
+
+- `devoluciones.id` - Auto-increment integer
+- `usuarios.USR` - Varchar username
+- `notificaciones.id` - Auto-increment integer
+- `login_attempts.id` - Auto-increment integer
+- `producto.id` - Integer
+
+### Foreign Keys
+
+<CodeGroup>
+```sql Devoluciones Relationships
+-- usuario_creador references usuarios.USR
+-- usuario_revisor references usuarios.USR
+-- (Implicit FK, not enforced in current schema)
+```
+
+```sql Notificaciones Relationship
+FOREIGN KEY (id_devolucion) REFERENCES devoluciones(id)
+-- Enforced foreign key constraint
+-- CASCADE delete recommended for production
+```
+</CodeGroup>
+
+### Recommended Indexes
+
+<Warning>
+For production performance, add these indexes:
+</Warning>
+
+```sql Performance Indexes
+-- Speed up status filtering
+CREATE INDEX idx_devoluciones_estado ON devoluciones(estado);
+
+-- Speed up date range queries
+CREATE INDEX idx_devoluciones_fecha ON devoluciones(fecha_creacion);
+
+-- Speed up user queries
+CREATE INDEX idx_devoluciones_creador ON devoluciones(usuario_creador);
+
+-- Speed up notification queries
+CREATE INDEX idx_notificaciones_usuario ON notificaciones(usuario_destino, leida);
+
+-- Speed up login attempt lookups
+CREATE INDEX idx_login_ip_user ON login_attempts(ip_address, username);
+```
+
+## Data Types and Constraints
+
+### Decimal Precision
+
+```sql
+kg DECIMAL(10,2)           -- Max: 99,999,999.99 kg
+cantidad_kg DECIMAL(10,2)  -- Max: 99,999,999.99 kg
+```
+
+<Note>
+`DECIMAL(10,2)` provides exact precision for financial and weight calculations, avoiding floating-point rounding errors.
+</Note>
+
+### Timestamp Behavior
+
+```sql
+fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+fecha_revision TIMESTAMP NULL
+```
+
+- `fecha_creacion`: Automatically set on INSERT
+- `fecha_revision`: NULL until admin reviews record
+
+### ENUM Constraints
+
+<Tabs>
+  <Tab title="estado">
+    ```sql
+    ENUM('pendiente', 'aprobado', 'rechazado')
+    DEFAULT 'pendiente'
+    ```
+    
+    Ensures only valid status values. Rejects invalid data at database level.
+  </Tab>
+  
+  <Tab title="motivo">
+    ```sql
+    ENUM('devolucion', 'faltante', 'sobrante')
+    NOT NULL
+    ```
+    
+    Required field. Prevents records without a defined reason.
+  </Tab>
+</Tabs>
+
+## Query Examples
+
+### Common Queries
+
+<CodeGroup>
+```sql Get Pending Deviations
+SELECT * FROM devoluciones 
+WHERE estado = 'pendiente' 
+ORDER BY fecha_creacion ASC;
+```
+
+```sql Statistics by Date
+SELECT 
+    COUNT(*) as total,
+    SUM(cantidad_kg) as total_kg,
+    SUM(cantidad_und) as total_und,
+    COUNT(CASE WHEN estado = 'Pendiente' THEN 1 END) as pendientes,
+    COUNT(CASE WHEN estado = 'Aprobado' THEN 1 END) as aprobados,
+    COUNT(CASE WHEN estado = 'Rechazado' THEN 1 END) as rechazados
+FROM devoluciones 
+WHERE DATE(fecha_creacion) = '2024-03-15';
+```
+
+```sql User Activity Report
+SELECT 
+    u.NOMBRE,
+    COUNT(d.id) as total_creadas,
+    SUM(CASE WHEN d.estado = 'aprobado' THEN 1 ELSE 0 END) as aprobadas
+FROM usuarios u
+LEFT JOIN devoluciones d ON u.USR = d.usuario_creador
+GROUP BY u.USR, u.NOMBRE;
+```
+
+```sql Unread Notifications
+SELECT n.*, d.codigo_producto, d.estado
+FROM notificaciones n
+INNER JOIN devoluciones d ON n.id_devolucion = d.id
+WHERE n.usuario_destino = 'AUXILIAR' 
+  AND n.leida = FALSE
+ORDER BY n.fecha DESC;
+```
+</CodeGroup>
+
+## Database Setup
+
+### Initial Setup
+
+```bash
+# Connect to MySQL
+mysql -u root -p
+
+# Create database and import schema
+source Script_BD/Script_DB.sql
+
+# Verify tables
+USE devolutionsync;
+SHOW TABLES;
+DESCRIBE devoluciones;
+```
+
+### Connection from PHP
+
+```php
+$pdo = Conexion::Conectar();
+// Returns configured PDO instance with:
+// - Exception error mode
+// - Associative fetch mode
+// - Real prepared statements
+```
+
+## Migration Considerations
+
+<Warning>
+**Production Recommendations:**
+
+1. Add password hashing (bcrypt/Argon2)
+2. Create explicit foreign keys on `devoluciones`
+3. Add indexes for performance
+4. Implement soft deletes (deleted_at column)
+5. Add audit trail (updated_at, updated_by)
+6. Use InnoDB engine for transactions
+7. Configure CASCADE rules for foreign keys
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MVC Structure" icon="layer-group" href="/technical/mvc-structure">
+    Learn how models interact with this schema
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/technical/architecture">
+    Understand overall system design
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/devolucion-model">
+    View model methods and database operations
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/technical/docker-deployment">
+    Deploy database with Docker
+  </Card>
+</CardGroup>

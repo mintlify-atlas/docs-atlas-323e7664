@@ -1,0 +1,987 @@
+---
+title: 'MVC Architecture'
+description: 'Comprehensive guide to the Model-View-Controller pattern implementation in DevolutionSync'
+icon: 'layer-group'
+---
+
+## Overview
+
+DevolutionSync implements a clean MVC (Model-View-Controller) architecture that separates business logic, data access, and presentation layers. This pattern ensures maintainability, testability, and scalability.
+
+## MVC Pattern Diagram
+
+```
+┌──────────────────────────────────────────────────┐
+│                   USER REQUEST                    │
+│            (HTTP via Browser)                     │
+└────────────────────┬─────────────────────────────┘
+                     │
+                     ▼
+┌────────────────────────────────────────────────────┐
+│              FRONT CONTROLLER                      │
+│                 (index.php)                        │
+│  • Parse URL                                       │
+│  • Load Controller                                 │
+│  • Execute Method                                  │
+└────────────────────┬───────────────────────────────┘
+                     │
+                     ▼
+┌────────────────────────────────────────────────────┐
+│                  CONTROLLER                        │
+│        (AuthController, AdminController)           │
+│  • Receive Request                                 │
+│  • Validate Input                                  │
+│  • Call Model Methods                              │
+│  • Prepare Data                                    │
+│  • Load View                                       │
+└──────────┬────────────────────┬────────────────────┘
+           │                    │
+           ▼                    ▼
+┌──────────────────┐  ┌──────────────────────────┐
+│      MODEL       │  │         VIEW             │
+│ (DevolucionModel)│  │  (panel_administrador)   │
+│  • Database      │  │  • HTML Template         │
+│  • Business Logic│  │  • Display Data          │
+│  • Data Access   │  │  • User Interface        │
+└──────────┬───────┘  └──────────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────────────────────┐
+│               DATABASE (MySQL)                    │
+│         devoluciones, usuarios, etc.              │
+└───────────────────────────────────────────────────┘
+```
+
+## Directory Structure
+
+```bash
+DevolutionSync/
+├── index.php                    # Front Controller
+├── Controllers/
+│   ├── AuthController.php       # Authentication
+│   ├── AdminController.php      # Administrator panel
+│   ├── PanelController.php      # User dashboard
+│   ├── ConsultaController.php   # Query/search
+│   ├── HomeController.php       # Home page
+│   └── UsuarioController.php    # User management
+├── Models/
+│   ├── AuthModel.php            # Authentication logic
+│   ├── DevolucionModel.php      # Deviation management
+│   ├── ProductoModel.php        # Product catalog
+│   ├── ConsultaModel.php        # Query operations
+│   └── UsuarioModel.php         # User operations
+├── Views/
+│   ├── auth/
+│   │   └── login.php            # Login page
+│   ├── admin/
+│   │   ├── panel_administrador.php
+│   │   └── estadisticas.php
+│   ├── panel/
+│   │   └── dashboard.php
+│   └── consulta/
+│       └── historial.php
+└── Config/
+    └── Conexion.php             # Database connection
+```
+
+## Controllers Layer
+
+### Purpose
+
+Controllers handle HTTP requests, coordinate between models and views, and contain application flow logic.
+
+### Controller Base Structure
+
+<CodeGroup>
+```php AuthController.php
+<?php
+require_once 'Models/AuthModel.php';
+
+class AuthController {
+    private $model;
+
+    public function __construct() {
+        if (session_status() === PHP_SESSION_NONE) session_start();
+        $this->model = new AuthModel();
+    }
+
+    public function index() {
+        if (isset($_SESSION['logged_in'])) {
+            $this->redirigirSegunGrado($_SESSION['grado']);
+            return;
+        }
+        require_once 'Views/auth/login.php';
+    }
+
+    public function login() {
+        header('Content-Type: application/json');
+        
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $username = trim($_POST['username'] ?? '');
+            $password = $_POST['password'] ?? '';
+
+            $user = $this->model->buscarUsuario($username);
+
+            if ($user && $password === $user['PAS']) {
+                $_SESSION['user'] = $user['USR'];
+                $_SESSION['nombre'] = $user['NOMBRE'];
+                $_SESSION['grado'] = $user['GRADO'];
+                $_SESSION['logged_in'] = true;
+                $_SESSION['last_activity'] = time();
+                
+                session_regenerate_id(true);
+
+                echo json_encode([
+                    'success' => true,
+                    'redirect' => $this->getRedirectUrl($user['GRADO'])
+                ]);
+            } else {
+                echo json_encode([
+                    'success' => false, 
+                    'message' => 'Credenciales incorrectas'
+                ]);
+            }
+        }
+    }
+
+    public function logout() {
+        session_unset();
+        session_destroy();
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+
+    private function getRedirectUrl($grado) {
+        switch ($grado) {
+            case 1: 
+                return 'index.php?url=home/index'; 
+            case 2: 
+                return 'index.php?url=devolucion/crear'; 
+            case 3: 
+                return 'index.php?url=consulta/index';
+            default: 
+                return 'index.php?url=auth/index';
+        }
+    }
+
+    private function redirigirSegunGrado($grado) {
+        header('Location: ' . $this->getRedirectUrl($grado));
+        exit;
+    }
+}
+```
+
+```php AdminController.php
+<?php
+require_once 'Models/DevolucionModel.php';
+require_once 'Models/ConsultaModel.php';
+
+class AdminController {
+    private $model;
+    private $consultaModel;
+
+    public function __construct() {
+        if (session_status() === PHP_SESSION_NONE) session_start();
+        
+        // Verify authentication and permissions (Grade 1 only)
+        if (!isset($_SESSION['logged_in']) || $_SESSION['grado'] != 1) {
+            header('Location: index.php?url=auth/index');
+            exit;
+        }
+        
+        $this->model = new DevolucionModel();
+        $this->consultaModel = new ConsultaModel();
+    }
+
+    public function index() {
+        $titulo = "Panel Administrador - DevolutionSync";
+        
+        // Get pending deviations
+        $pendientes = $this->model->obtenerPendientes();
+        
+        // Get recent history
+        $historial = $this->consultaModel->obtenerHistorial(50);
+        
+        // Load view
+        require_once 'Views/admin/panel_administrador.php';
+    }
+
+    public function revisar() {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            try {
+                $id = intval($_POST['id_devolucion'] ?? 0);
+                $accion = trim($_POST['accion'] ?? '');
+                $codigo = trim($_POST['codigo_admin'] ?? '');
+                $obs = trim($_POST['observacion_admin'] ?? '');
+                $revisor = $_SESSION['user'] ?? $_SESSION['nombre'];
+                
+                // Validations
+                if ($id <= 0) {
+                    throw new Exception('Invalid deviation ID');
+                }
+                
+                if (!in_array($accion, ['aprobado', 'rechazado'])) {
+                    throw new Exception('Invalid action');
+                }
+                
+                if (empty($codigo)) {
+                    throw new Exception('Authorization code required');
+                }
+                
+                if (empty($obs)) {
+                    throw new Exception('Observations required');
+                }
+                
+                // Process review
+                $resultado = $this->model->procesarRevision(
+                    $id, $accion, $codigo, $obs, $revisor
+                );
+                
+                if ($resultado) {
+                    $this->crearNotificacion($id, $accion, $obs);
+                    header('Location: index.php?url=admin/index&msg=success');
+                } else {
+                    throw new Exception('Database error');
+                }
+                
+            } catch (Exception $e) {
+                error_log("Error in AdminController::revisar - " . $e->getMessage());
+                header('Location: index.php?url=admin/index&msg=error');
+            }
+            exit;
+        }
+    }
+
+    private function crearNotificacion($idDevolucion, $accion, $observacion) {
+        try {
+            if (!class_exists('NotificacionModel')) return;
+            
+            require_once 'Models/NotificacionModel.php';
+            $notifModel = new NotificacionModel();
+            
+            $devolucion = $this->consultaModel->obtenerPorId($idDevolucion);
+            
+            if ($devolucion && isset($devolucion['usuario_creador'])) {
+                $estadoTexto = ($accion == 'aprobado') 
+                    ? 'APROBADA ✅' : 'RECHAZADA ❌';
+                $mensaje = "Tu devolución #{$idDevolucion} ha sido {$estadoTexto}. " .
+                          "Observación: {$observacion}";
+                
+                $notifModel->crear([
+                    'id_devolucion' => $idDevolucion,
+                    'mensaje' => $mensaje,
+                    'usuario_destino' => $devolucion['usuario_creador'],
+                    'tipo' => $accion,
+                    'leida' => false
+                ]);
+            }
+        } catch (Exception $e) {
+            error_log("Error creating notification: " . $e->getMessage());
+        }
+    }
+}
+```
+</CodeGroup>
+
+### Controller Responsibilities
+
+<CardGroup cols={2}>
+  <Card title="Request Handling" icon="arrow-down">
+    - Receive HTTP requests
+    - Parse GET/POST parameters
+    - Validate input data
+    - Handle file uploads
+  </Card>
+  
+  <Card title="Business Logic" icon="gears">
+    - Call model methods
+    - Process data
+    - Apply business rules
+    - Handle transactions
+  </Card>
+  
+  <Card title="Security" icon="shield">
+    - Session management
+    - Authentication checks
+    - Authorization validation
+    - CSRF protection
+  </Card>
+  
+  <Card title="Response" icon="arrow-up">
+    - Load views
+    - Return JSON
+    - Handle redirects
+    - Set headers
+  </Card>
+</CardGroup>
+
+### Controller Naming Convention
+
+<Note>
+**Pattern**: `{Entity}Controller.php`
+
+- Class name: `{Entity}Controller`
+- File name: `{Entity}Controller.php`
+- Location: `Controllers/`
+- Example: `AdminController.php` contains `class AdminController`
+</Note>
+
+## Models Layer
+
+### Purpose
+
+Models handle data access, database operations, and contain business logic related to data manipulation.
+
+### Model Base Structure
+
+<CodeGroup>
+```php DevolucionModel.php
+<?php
+require_once 'Config/Conexion.php';
+
+class DevolucionModel {
+    private $db;
+
+    public function __construct() {
+        $this->db = Conexion::Conectar();
+    }
+
+    // ========================================
+    // CREATE - Insert new deviation
+    // ========================================
+    
+    public function guardar($datos) {
+        $sql = "INSERT INTO devoluciones (
+                    nit, nombre_cliente, direccion, item_producto, 
+                    descripcion_producto, unidad, kg, motivo, 
+                    cantidad_und, cantidad_kg, observacion, 
+                    usuario_creador, estado, fecha_creacion, evidencia
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pendiente', NOW(), ?)";
+        
+        $stmt = $this->db->prepare($sql);
+        
+        return $stmt->execute([
+            $datos['nit'],
+            $datos['nombre_cliente'],
+            $datos['direccion'],
+            $datos['item_producto'],
+            $datos['descripcion_producto'],
+            $datos['unidad'],
+            $datos['kg'],
+            $datos['motivo'],
+            $datos['cantidad_und'],
+            $datos['cantidad_kg'],
+            $datos['observacion'],
+            $datos['usuario_creador'],
+            $datos['evidencia'] ?? null
+        ]);
+    }
+
+    // ========================================
+    // READ - Get pending deviations
+    // ========================================
+
+    public function obtenerPendientes() {
+        $stmt = $this->db->prepare(
+            "SELECT * FROM devoluciones 
+             WHERE estado = 'Pendiente' 
+             ORDER BY fecha_creacion ASC"
+        );
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    // ========================================
+    // UPDATE - Process admin review
+    // ========================================
+
+    public function procesarRevision($id, $accion, $codigo, $obs, $revisor) {
+        try {
+            $this->db->beginTransaction();
+
+            $sql = "UPDATE devoluciones 
+                    SET estado = ?, 
+                        codigo_admin = ?, 
+                        observacion_admin = ?, 
+                        usuario_revisor = ?, 
+                        fecha_revision = NOW() 
+                    WHERE id = ?";
+            
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([$accion, $codigo, $obs, $revisor, $id]);
+
+            $this->db->commit();
+            return true;
+        } catch (Exception $e) {
+            $this->db->rollBack();
+            return false;
+        }
+    }
+
+    // ========================================
+    // STATISTICS - Dashboard data
+    // ========================================
+    
+    public function obtenerEstadisticas($fecha = null) {
+        $where = $fecha ? "WHERE DATE(fecha_creacion) = :fecha" : "";
+        
+        $sql = "SELECT 
+                    COUNT(*) as total,
+                    COALESCE(SUM(cantidad_kg), 0) as total_kg,
+                    COALESCE(SUM(cantidad_und), 0) as total_und,
+                    
+                    COUNT(CASE WHEN estado = 'Pendiente' THEN 1 END) as pendientes,
+                    COUNT(CASE WHEN estado = 'Aprobado' THEN 1 END) as aprobados,
+                    COUNT(CASE WHEN estado = 'Rechazado' THEN 1 END) as rechazados,
+                    
+                    COUNT(CASE WHEN motivo = 'Devolucion' THEN 1 END) as motivo_dev,
+                    COUNT(CASE WHEN motivo = 'Faltante' THEN 1 END) as motivo_fal,
+                    COUNT(CASE WHEN motivo = 'Sobrante' THEN 1 END) as motivo_sob
+                FROM devoluciones 
+                $where";
+
+        $stmt = $this->db->prepare($sql);
+        if ($fecha) $stmt->bindValue(':fecha', $fecha);
+        $stmt->execute();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+    public function obtenerFechas() {
+        $stmt = $this->db->query(
+            "SELECT DISTINCT DATE(fecha_creacion) as fecha 
+             FROM devoluciones 
+             ORDER BY fecha DESC"
+        );
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+}
+```
+
+```php ProductoModel.php
+<?php
+require_once 'Config/Conexion.php';
+
+class ProductoModel {
+    private $db;
+
+    public function __construct() {
+        $this->db = Conexion::Conectar();
+    }
+
+    public function listarTodos() {
+        $stmt = $this->db->prepare(
+            "SELECT item, descripcion 
+             FROM producto 
+             ORDER BY descripcion ASC"
+        );
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public function obtenerPorItem($item) {
+        $stmt = $this->db->prepare(
+            "SELECT item, descripcion 
+             FROM producto 
+             WHERE item = ?"
+        );
+        $stmt->execute([$item]);
+        return $stmt->fetch();
+    }
+}
+```
+</CodeGroup>
+
+### Model Responsibilities
+
+<AccordionGroup>
+  <Accordion title="Data Access Layer">
+    - Execute SQL queries
+    - Use prepared statements
+    - Handle database connections
+    - Return result sets
+  </Accordion>
+  
+  <Accordion title="CRUD Operations">
+    - **Create**: Insert new records
+    - **Read**: Query and fetch data
+    - **Update**: Modify existing records
+    - **Delete**: Remove records (soft/hard)
+  </Accordion>
+  
+  <Accordion title="Business Logic">
+    - Data validation
+    - Calculations and aggregations
+    - Transaction management
+    - Data transformations
+  </Accordion>
+  
+  <Accordion title="Database Abstraction">
+    - Hide SQL complexity
+    - Provide clean interfaces
+    - Return formatted data
+    - Handle database errors
+  </Accordion>
+</AccordionGroup>
+
+### PDO Connection Pattern
+
+All models use the `Conexion` class for database access:
+
+```php
+private $db;
+
+public function __construct() {
+    $this->db = Conexion::Conectar();
+}
+```
+
+<Note>
+The `Conexion::Conectar()` method returns a configured PDO instance with:
+- Exception error mode
+- Associative array fetch mode
+- Real prepared statements (not emulated)
+</Note>
+
+### Prepared Statements
+
+<Tabs>
+  <Tab title="With Positional Parameters">
+    ```php
+    $sql = "SELECT * FROM devoluciones WHERE id = ? AND estado = ?";
+    $stmt = $this->db->prepare($sql);
+    $stmt->execute([123, 'pendiente']);
+    ```
+  </Tab>
+  
+  <Tab title="With Named Parameters">
+    ```php
+    $sql = "SELECT * FROM devoluciones WHERE id = :id AND estado = :estado";
+    $stmt = $this->db->prepare($sql);
+    $stmt->bindValue(':id', 123);
+    $stmt->bindValue(':estado', 'pendiente');
+    $stmt->execute();
+    ```
+  </Tab>
+</Tabs>
+
+### Transaction Management
+
+```php DevolucionModel.php (excerpt)
+public function procesarRevision($id, $accion, $codigo, $obs, $revisor) {
+    try {
+        $this->db->beginTransaction();
+
+        // Multiple database operations
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([...]);
+        
+        // More operations...
+
+        $this->db->commit();
+        return true;
+    } catch (Exception $e) {
+        $this->db->rollBack();
+        return false;
+    }
+}
+```
+
+<Warning>
+**Transaction Best Practices:**
+- Always use try-catch with transactions
+- Roll back on any error
+- Keep transactions short
+- Avoid user input during transactions
+</Warning>
+
+## Views Layer
+
+### Purpose
+
+Views handle presentation logic and render HTML templates with data provided by controllers.
+
+### View Structure Example
+
+```php Views/admin/panel_administrador.php (excerpt)
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title><?= htmlspecialchars($titulo) ?></title>
+    <link rel="stylesheet" href="assets/css/admin.css">
+</head>
+<body>
+    <header>
+        <h1>Panel de Administración</h1>
+        <p>Usuario: <?= htmlspecialchars($_SESSION['nombre']) ?></p>
+    </header>
+    
+    <main>
+        <section class="pendientes">
+            <h2>Devoluciones Pendientes (<?= count($pendientes) ?>)</h2>
+            
+            <?php if (empty($pendientes)): ?>
+                <p class="no-data">No hay devoluciones pendientes</p>
+            <?php else: ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Cliente</th>
+                            <th>Producto</th>
+                            <th>Motivo</th>
+                            <th>Fecha</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($pendientes as $dev): ?>
+                            <tr>
+                                <td><?= htmlspecialchars($dev['id']) ?></td>
+                                <td><?= htmlspecialchars($dev['nombre_cliente']) ?></td>
+                                <td><?= htmlspecialchars($dev['descripcion_producto']) ?></td>
+                                <td><?= htmlspecialchars($dev['motivo']) ?></td>
+                                <td><?= htmlspecialchars($dev['fecha_creacion']) ?></td>
+                                <td>
+                                    <button onclick="revisar(<?= $dev['id'] ?>)">
+                                        Revisar
+                                    </button>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </section>
+    </main>
+    
+    <script src="assets/js/admin.js"></script>
+</body>
+</html>
+```
+
+### View Responsibilities
+
+<CardGroup cols={2}>
+  <Card title="Presentation" icon="paint-brush">
+    - Render HTML
+    - Display data
+    - Format output
+    - Apply styling
+  </Card>
+  
+  <Card title="User Interface" icon="window">
+    - Forms
+    - Tables
+    - Buttons
+    - Navigation
+  </Card>
+  
+  <Card title="Data Display" icon="table">
+    - Loop through arrays
+    - Conditional rendering
+    - Format dates/numbers
+    - Escape output
+  </Card>
+  
+  <Card title="Client-Side" icon="code">
+    - Include JavaScript
+    - Include CSS
+    - AJAX calls
+    - Event handlers
+  </Card>
+</CardGroup>
+
+### XSS Prevention
+
+<Warning>
+**Always escape user data in views:**
+</Warning>
+
+```php
+<!-- GOOD: Escaped output -->
+<p>Cliente: <?= htmlspecialchars($cliente['nombre']) ?></p>
+
+<!-- BAD: Direct output (XSS vulnerability) -->
+<p>Cliente: <?= $cliente['nombre'] ?></p>
+
+<!-- GOOD: Escaped attribute -->
+<input type="text" value="<?= htmlspecialchars($producto['nombre']) ?>">
+
+<!-- GOOD: Loop with escaping -->
+<?php foreach ($items as $item): ?>
+    <li><?= htmlspecialchars($item['descripcion']) ?></li>
+<?php endforeach; ?>
+```
+
+### View Loading Pattern
+
+Controllers load views using `require_once`:
+
+```php
+public function index() {
+    $titulo = "Panel Administrador";
+    $pendientes = $this->model->obtenerPendientes();
+    $historial = $this->consultaModel->obtenerHistorial(50);
+    
+    // Variables are available in the view
+    require_once 'Views/admin/panel_administrador.php';
+}
+```
+
+<Note>
+Variables defined in the controller method are automatically available in the required view file.
+</Note>
+
+## Data Flow Example
+
+### Complete Request-Response Cycle
+
+<Steps>
+  <Step title="User Submits Form">
+    User clicks "Aprobar" button on admin panel
+    ```javascript
+    fetch('index.php?url=admin/revisar', {
+        method: 'POST',
+        body: formData
+    })
+    ```
+  </Step>
+  
+  <Step title="Front Controller Routes">
+    `index.php` parses URL and loads `AdminController`
+    ```php
+    $controllerName = 'AdminController';
+    $method = 'revisar';
+    $controller->revisar();
+    ```
+  </Step>
+  
+  <Step title="Controller Validates">
+    `AdminController::revisar()` validates input
+    ```php
+    $id = intval($_POST['id_devolucion'] ?? 0);
+    $accion = trim($_POST['accion'] ?? '');
+    if (!in_array($accion, ['aprobado', 'rechazado'])) {
+        throw new Exception('Invalid action');
+    }
+    ```
+  </Step>
+  
+  <Step title="Model Updates Database">
+    `DevolucionModel::procesarRevision()` executes SQL
+    ```php
+    $this->db->beginTransaction();
+    $stmt->execute([$accion, $codigo, $obs, $revisor, $id]);
+    $this->db->commit();
+    ```
+  </Step>
+  
+  <Step title="Controller Responds">
+    Redirect to admin panel with success message
+    ```php
+    header('Location: index.php?url=admin/index&msg=success');
+    ```
+  </Step>
+  
+  <Step title="View Displays Result">
+    Admin panel shows updated data
+    ```php
+    $pendientes = $this->model->obtenerPendientes();
+    require_once 'Views/admin/panel_administrador.php';
+    ```
+  </Step>
+</Steps>
+
+## Best Practices
+
+### Controller Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep Controllers Thin">
+    Controllers should orchestrate, not implement business logic:
+    
+    ```php
+    // ❌ BAD: Too much logic in controller
+    public function aprobar() {
+        $sql = "UPDATE devoluciones SET estado = 'aprobado' WHERE id = ?";
+        $stmt = $db->prepare($sql);
+        $stmt->execute([$id]);
+    }
+    
+    // ✅ GOOD: Delegate to model
+    public function aprobar() {
+        $resultado = $this->model->aprobarDevolucion($id);
+        if ($resultado) {
+            header('Location: index.php?url=admin/index&msg=success');
+        }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Validate All Input">
+    ```php
+    // ✅ GOOD: Thorough validation
+    $id = intval($_POST['id_devolucion'] ?? 0);
+    if ($id <= 0) {
+        throw new Exception('Invalid ID');
+    }
+    
+    $accion = trim($_POST['accion'] ?? '');
+    if (!in_array($accion, ['aprobado', 'rechazado'])) {
+        throw new Exception('Invalid action');
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Check Permissions Early">
+    ```php
+    public function __construct() {
+        if (session_status() === PHP_SESSION_NONE) session_start();
+        
+        // Check authentication first
+        if (!isset($_SESSION['logged_in']) || $_SESSION['grado'] != 1) {
+            header('Location: index.php?url=auth/index');
+            exit;
+        }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Model Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Prepared Statements">
+    ```php
+    // ✅ GOOD: Prepared statement
+    $stmt = $this->db->prepare("SELECT * FROM devoluciones WHERE id = ?");
+    $stmt->execute([$id]);
+    
+    // ❌ BAD: String interpolation (SQL injection!)
+    $sql = "SELECT * FROM devoluciones WHERE id = $id";
+    $this->db->query($sql);
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle Transactions Properly">
+    ```php
+    public function complexOperation() {
+        try {
+            $this->db->beginTransaction();
+            
+            // Multiple operations
+            $this->updateDevolucion($id);
+            $this->createNotificacion($userId);
+            
+            $this->db->commit();
+            return true;
+        } catch (Exception $e) {
+            $this->db->rollBack();
+            error_log($e->getMessage());
+            return false;
+        }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Return Consistent Data Types">
+    ```php
+    // ✅ GOOD: Consistent return type
+    public function obtenerPorId($id) {
+        $stmt = $this->db->prepare("SELECT * FROM devoluciones WHERE id = ?");
+        $stmt->execute([$id]);
+        $result = $stmt->fetch();
+        return $result ?: null; // Always return array or null
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### View Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always Escape Output">
+    ```php
+    <!-- ✅ GOOD: Escaped -->
+    <p><?= htmlspecialchars($data['nombre']) ?></p>
+    
+    <!-- ❌ BAD: Not escaped (XSS vulnerability) -->
+    <p><?= $data['nombre'] ?></p>
+    ```
+  </Accordion>
+  
+  <Accordion title="No Business Logic in Views">
+    ```php
+    <!-- ❌ BAD: Database query in view -->
+    <?php
+    $stmt = $db->query("SELECT * FROM devoluciones");
+    $data = $stmt->fetchAll();
+    ?>
+    
+    <!-- ✅ GOOD: Data passed from controller -->
+    <?php foreach ($pendientes as $item): ?>
+        <li><?= htmlspecialchars($item['nombre']) ?></li>
+    <?php endforeach; ?>
+    ```
+  </Accordion>
+  
+  <Accordion title="Separate Templates">
+    ```php
+    <!-- ✅ GOOD: Reusable header -->
+    <?php require_once 'Views/partials/header.php'; ?>
+    
+    <main>
+        <!-- Page content -->
+    </main>
+    
+    <?php require_once 'Views/partials/footer.php'; ?>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Testing Considerations
+
+### Unit Testing Models
+
+```php
+class DevolucionModelTest extends PHPUnit\Framework\TestCase {
+    private $model;
+    
+    public function setUp(): void {
+        $this->model = new DevolucionModel();
+    }
+    
+    public function testObtenerPendientes() {
+        $result = $this->model->obtenerPendientes();
+        $this->assertIsArray($result);
+    }
+    
+    public function testGuardarDevolucion() {
+        $datos = [
+            'nit' => '900123456',
+            'nombre_cliente' => 'Test Cliente',
+            // ... more fields
+        ];
+        $result = $this->model->guardar($datos);
+        $this->assertTrue($result);
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="diagram-project" href="/technical/architecture">
+    Understand the complete system architecture
+  </Card>
+  <Card title="Database Schema" icon="database" href="/technical/database-schema">
+    Explore the database structure
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth-controller">
+    View all controller and model methods
+  </Card>
+  <Card title="Deployment" icon="docker" href="/technical/docker-deployment">
+    Deploy with Docker
+  </Card>
+</CardGroup>

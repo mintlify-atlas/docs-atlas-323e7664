@@ -1,80 +1,385 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get DevolutionSync running locally in under 5 minutes
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+Before you begin, ensure you have the following installed:
 
-### Step 1: Set up your local environment
+- [Docker](https://docs.docker.com/get-docker/) (20.10 or higher)
+- [Docker Compose](https://docs.docker.com/compose/install/) (1.29 or higher)
+- A MySQL database server accessible from your Docker container
+
+<Note>
+This quick start guide uses Docker Compose for the fastest setup experience. For production deployment, see the [Installation Guide](/installation).
+</Note>
+
+## Setup Steps
+
+<Steps>
+  <Step title="Clone the Repository">
+    Clone the DevolutionSync repository to your local machine:
+
+    ```bash
+    git clone https://github.com/your-org/devolutionsync.git
+    cd devolutionsync
+    ```
+  </Step>
+
+  <Step title="Configure Database Connection">
+    Update the database credentials in `Config/Conexion.php`:
+
+    ```php Config/Conexion.php
+    <?php
+    class Conexion {
+        public static function Conectar() {
+            $host = '192.200.100.40';      // Your MySQL host
+            $db   = 'devolutionsync';       // Database name
+            $user = 'SANMARINO';            // Database user
+            $pass = 'sanmarino2021*';       // Database password
+            $charset = 'utf8';
+
+            $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+
+            $opciones = [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES   => false,
+            ];
+
+            try {
+                $pdo = new PDO($dsn, $user, $pass, $opciones);
+                return $pdo;
+            } catch (PDOException $e) {
+                die("Error de conexión (PDO): " . $e->getMessage());
+            }
+        }
+    }
+    ```
+
+    <Warning>
+    In production, use environment variables or a `.env` file instead of hardcoded credentials.
+    </Warning>
+  </Step>
+
+  <Step title="Initialize the Database">
+    Import the database schema and default users:
+
+    ```bash
+    mysql -h 192.200.100.40 -u SANMARINO -p devolutionsync < Script_BD/Script_DB.sql
+    ```
+
+    This creates the following tables:
+    - `devoluciones` - Product return records
+    - `notificaciones` - User notifications
+    - `login_attempts` - Security tracking
+    - `usuarios` - User accounts
+    - `producto` - Product catalog
+
+    And inserts three default users:
+
+    | Username | Password | Role | Grado |
+    |----------|----------|------|-------|
+    | ANALISTA | 1088350785 | Admin | 1 |
+    | AUXILIAR | 895623 | Auxiliary | 2 |
+    | CONSULTA | 895623 | Consultation | 3 |
+  </Step>
+
+  <Step title="Launch with Docker Compose">
+    Start the application using Docker Compose:
+
+    ```bash
+    docker-compose up -d
+    ```
+
+    The `Docker-compose.yml` configuration:
+
+    ```yaml Docker-compose.yml
+    services:
+      web:
+        build:
+          context: .
+          dockerfile: Dockerfile
+        container_name: Proyecto_UCP
+        ports:
+          - "8097:80"                   
+        volumes:
+          - ./:/var/www/html
+        networks:
+          - red_local
+
+    volumes:
+      db_data:
+
+    networks:
+      red_local:
+    ```
+
+    The application builds from this Dockerfile:
+
+    ```dockerfile Dockerfile
+    # Usa la imagen oficial de PHP con Apache
+    FROM php:8.2-apache
+
+    # Habilita extensiones necesarias
+    RUN docker-php-ext-install pdo pdo_mysql mysqli
+
+    # Copia todos los archivos del proyecto al contenedor
+    COPY . /var/www/html/
+
+    # Ajusta permisos
+    RUN chown -R www-data:www-data /var/www/html \
+        && chmod -R 755 /var/www/html
+
+    # Expone el puerto del servidor Apache
+    EXPOSE 80
+    ```
+  </Step>
+
+  <Step title="Access the Application">
+    Open your browser and navigate to:
+
+    ```
+    http://localhost:8097
+    ```
+
+    You should see the DevolutionSync login page.
+  </Step>
+</Steps>
+
+## First Login
+
+<Tabs>
+  <Tab title="Admin Access">
+    Log in with administrator credentials to access the full dashboard:
+
+    - **Username**: `ANALISTA`
+    - **Password**: `1088350785`
+    - **Redirects to**: Dashboard with analytics and pending approvals
+
+    The authentication flow in `AuthController.php`:
+
+    ```php Controllers/AuthController.php
+    public function login() {
+        header('Content-Type: application/json');
+        
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $username = trim($_POST['username'] ?? '');
+            $password = $_POST['password'] ?? '';
+
+            $user = $this->model->buscarUsuario($username);
+
+            if ($user && $password === $user['PAS']) {
+                $_SESSION['user'] = $user['USR'];
+                $_SESSION['nombre'] = $user['NOMBRE'];
+                $_SESSION['grado'] = $user['GRADO'];
+                $_SESSION['logged_in'] = true;
+                $_SESSION['last_activity'] = time();
+                
+                session_regenerate_id(true);
+
+                echo json_encode([
+                    'success' => true,
+                    'redirect' => $this->getRedirectUrl($user['GRADO'])
+                ]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Credenciales incorrectas']);
+            }
+        }
+    }
+
+    private function getRedirectUrl($grado) {
+        switch ($grado) {
+            case 1: 
+                return 'index.php?url=home/index';  // Admin dashboard
+            case 2: 
+                return 'index.php?url=devolucion/crear';  // Auxiliary form
+            case 3: 
+                return 'index.php?url=consulta/index';  // Read-only view
+            default: 
+                return 'index.php?url=auth/index';
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Auxiliary Access">
+    Log in as auxiliary user to create return requests:
+
+    - **Username**: `AUXILIAR`
+    - **Password**: `895623`
+    - **Redirects to**: Product return registration form
+  </Tab>
+
+  <Tab title="Consultation Access">
+    Log in with read-only credentials to view records:
+
+    - **Username**: `CONSULTA`
+    - **Password**: `895623`
+    - **Redirects to**: Historical records and reports
+  </Tab>
+</Tabs>
+
+## Navigate the Dashboard
+
+After logging in as **ANALISTA**, you'll see the main dashboard with real-time statistics:
+
+### Dashboard Features
+
+The `HomeController.php` loads analytics from the `DevolucionModel`:
+
+```php Controllers/HomeController.php
+public function index() {
+    // Capturar fecha del filtro o usar la actual
+    $fechaFiltro = $_GET['fecha'] ?? date('Y-m-d');
+    
+    // 1. Obtener estadísticas del día seleccionado
+    $statsHoy = $this->model->obtenerEstadisticas($fechaFiltro);
+    
+    // 2. Obtener estadísticas históricas (sin pasar fecha)
+    $statsGeneral = $this->model->obtenerEstadisticas();
+    
+    // 3. Obtener fechas disponibles para el select
+    $fechas = $this->model->obtenerFechas();
+
+    $titulo = "Dashboard General - DevolutionSync";
+    
+    require_once 'Views/home/dashboard.php';
+}
+```
+
+### Statistics Query
+
+The statistics are generated by a comprehensive SQL query:
+
+```php Models/DevolucionModel.php
+public function obtenerEstadisticas($fecha = null) {
+    $where = $fecha ? "WHERE DATE(fecha_creacion) = :fecha" : "";
+    
+    $sql = "SELECT 
+                COUNT(*) as total,
+                COALESCE(SUM(cantidad_kg), 0) as total_kg,
+                COALESCE(SUM(cantidad_und), 0) as total_und,
+                
+                -- Conteo por Estados
+                COUNT(CASE WHEN estado = 'Pendiente' THEN 1 END) as pendientes,
+                COUNT(CASE WHEN estado = 'Aprobado' THEN 1 END) as aprobados,
+                COUNT(CASE WHEN estado = 'Rechazado' THEN 1 END) as rechazados,
+                
+                -- Conteo por Motivos
+                COUNT(CASE WHEN motivo = 'Devolucion' THEN 1 END) as motivo_dev,
+                COUNT(CASE WHEN motivo = 'Faltante' THEN 1 END) as motivo_fal,
+                COUNT(CASE WHEN motivo = 'Sobrante' THEN 1 END) as motivo_sob
+            FROM devoluciones 
+            $where";
+
+    $stmt = $this->db->prepare($sql);
+    if ($fecha) $stmt->bindValue(':fecha', $fecha);
+    $stmt->execute();
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+```
+
+## Test the Workflow
+
+<Steps>
+  <Step title="Create a Return Request">
+    1. Log out and log back in as `AUXILIAR`
+    2. Fill out the return registration form with:
+       - Customer NIT and details
+       - Product code from catalog
+       - Deviation type (return/shortage/surplus)
+       - Quantities and evidence photo
+    3. Submit the form
+  </Step>
+
+  <Step title="Review as Admin">
+    1. Log out and log back in as `ANALISTA`
+    2. Navigate to the admin panel
+    3. Review the pending request
+    4. Approve or reject with authorization code
+  </Step>
+
+  <Step title="Check Notifications">
+    1. Log back in as `AUXILIAR`
+    2. View the notification of the admin's decision
+    3. Review the authorization code and observations
+  </Step>
+</Steps>
+
+## Verify Installation
+
+Check that all services are running:
+
+```bash
+# Check container status
+docker ps
+
+# View application logs
+docker logs Proyecto_UCP
+
+# Test database connection
+docker exec -it Proyecto_UCP php -r "require 'Config/Conexion.php'; Conexion::Conectar(); echo 'Connected!\n';"
+```
+
+## Common Issues
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+  <Accordion title="Port 8097 already in use">
+    Edit `Docker-compose.yml` and change the port mapping:
+
+    ```yaml
+    ports:
+      - "8098:80"  # Use a different port
+    ```
+
+    Then restart: `docker-compose down && docker-compose up -d`
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+
+  <Accordion title="Database connection failed">
+    Verify the database is accessible from the Docker container:
+
+    ```bash
+    docker exec -it Proyecto_UCP ping 192.200.100.40
+    docker exec -it Proyecto_UCP mysql -h 192.200.100.40 -u SANMARINO -p
+    ```
+
+    If the database is on the same host, use `host.docker.internal` instead of an IP address.
+  </Accordion>
+
+  <Accordion title="Session timeout immediately">
+    Check PHP session configuration:
+
+    ```bash
+    docker exec -it Proyecto_UCP php -i | grep session
+    ```
+
+    Ensure `session.save_path` is writable by the www-data user.
+  </Accordion>
+
+  <Accordion title="File uploads not working">
+    Verify the uploads directory has correct permissions:
+
+    ```bash
+    docker exec -it Proyecto_UCP ls -la uploads/
+    docker exec -it Proyecto_UCP chown -R www-data:www-data uploads/
+    docker exec -it Proyecto_UCP chmod -R 755 uploads/
+    ```
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Installation Guide" icon="server" href="/installation">
+    Set up DevolutionSync for production deployment
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth-controller">
+    Explore the MVC controllers and models
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+For security best practices and production hardening, refer to the [Installation Guide](/installation).
 </Note>

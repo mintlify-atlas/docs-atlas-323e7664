@@ -1,0 +1,662 @@
+---
+title: Installation
+description: Complete guide for production deployment of DevolutionSync
+---
+
+## Overview
+
+This guide covers production-grade installation of DevolutionSync, including database setup, application configuration, Docker deployment, and security hardening.
+
+<Warning>
+This installation guide assumes you have system administrator access and basic knowledge of Linux, MySQL, and Docker.
+</Warning>
+
+## Prerequisites
+
+Before beginning installation, ensure you have:
+
+### System Requirements
+
+<Tabs>
+  <Tab title="Docker Deployment">
+    - Docker 20.10 or higher
+    - Docker Compose 1.29 or higher
+    - 1GB RAM minimum (2GB recommended)
+    - 5GB disk space
+    - Ubuntu 20.04+ or CentOS 8+
+  </Tab>
+
+  <Tab title="Traditional LAMP">
+    - PHP 8.2 or higher with extensions:
+      - pdo
+      - pdo_mysql
+      - mysqli
+      - session
+      - json
+    - Apache 2.4+ with mod_rewrite
+    - MySQL 5.7+ or MariaDB 10.3+
+    - 2GB RAM minimum
+    - 10GB disk space
+  </Tab>
+</Tabs>
+
+### Network Requirements
+
+- Firewall rules allowing HTTP/HTTPS traffic
+- Access to MySQL database (port 3306)
+- SSL certificate for HTTPS (recommended)
+
+## Database Setup
+
+<Steps>
+  <Step title="Create Database">
+    Log into your MySQL server and create the DevolutionSync database:
+
+    ```sql
+    CREATE DATABASE IF NOT EXISTS devolutionsync;
+    USE devolutionsync;
+    ```
+  </Step>
+
+  <Step title="Create Database User">
+    Create a dedicated user with appropriate permissions:
+
+    ```sql
+    CREATE USER 'devolution_user'@'%' IDENTIFIED BY 'your_secure_password';
+    GRANT SELECT, INSERT, UPDATE, DELETE ON devolutionsync.* TO 'devolution_user'@'%';
+    FLUSH PRIVILEGES;
+    ```
+
+    <Warning>
+    Replace `your_secure_password` with a strong password. Never use default credentials in production.
+    </Warning>
+  </Step>
+
+  <Step title="Import Database Schema">
+    Import the complete database schema from `Script_BD/Script_DB.sql`:
+
+    ```bash
+    mysql -u root -p devolutionsync < Script_BD/Script_DB.sql
+    ```
+
+    This creates the following tables:
+
+    ```sql Script_BD/Script_DB.sql
+    -- Tabla de devoluciones
+    CREATE TABLE IF NOT EXISTS devoluciones (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        nit VARCHAR(20) NOT NULL,
+        nombre_cliente VARCHAR(255) NOT NULL,
+        direccion TEXT,
+        codigo_producto VARCHAR(50) NOT NULL,
+        descripcion_producto TEXT,
+        unidad VARCHAR(20),
+        kg DECIMAL(10,2),
+        motivo ENUM('devolucion', 'faltante', 'sobrante') NOT NULL,
+        cantidad_und INT,
+        cantidad_kg DECIMAL(10,2),
+        evidencia VARCHAR(255),
+        observacion TEXT,
+        estado ENUM('pendiente', 'aprobado', 'rechazado') DEFAULT 'pendiente',
+        observacion_admin TEXT,
+        codigo_admin VARCHAR(50),
+        fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        fecha_revision TIMESTAMP NULL,
+        usuario_creador VARCHAR(50) NOT NULL,
+        usuario_revisor VARCHAR(50)
+    );
+
+    -- Tabla de notificaciones
+    CREATE TABLE IF NOT EXISTS notificaciones (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        id_devolucion INT NOT NULL,
+        mensaje TEXT NOT NULL,
+        leida BOOLEAN DEFAULT FALSE,
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        usuario_destino VARCHAR(50) NOT NULL,
+        FOREIGN KEY (id_devolucion) REFERENCES devoluciones(id)
+    );
+
+    -- Tabla login_attempts
+    CREATE TABLE IF NOT EXISTS login_attempts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        ip_address VARCHAR(45) NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        attempts INT DEFAULT 0,
+        last_attempt DATETIME,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Tabla usuarios
+    CREATE TABLE `usuarios` (
+        `USR` VARCHAR(50) NOT NULL,
+        `PAS` VARCHAR(50) NOT NULL,
+        `NOMBRE` VARCHAR(100) NOT NULL,
+        `GRADO` INT NOT NULL,
+        PRIMARY KEY (`USR`)
+    );
+    ```
+  </Step>
+
+  <Step title="Verify Default Users">
+    The script creates three default users:
+
+    ```sql
+    INSERT INTO `usuarios` (`USR`, `PAS`, `NOMBRE`, `GRADO`) 
+    VALUES 
+        ('ANALISTA', '1088350785', 'SEBASTIAN OBANDO', 1),
+        ('AUXILIAR', '895623', 'AUXILIAR', 2),
+        ('CONSULTA', '895623', 'CONSULTA', 3);
+    ```
+
+    <Note>
+    Change these default passwords immediately after installation using the admin user management interface.
+    </Note>
+  </Step>
+
+  <Step title="Configure Indexes (Optional)">
+    For better query performance on large datasets:
+
+    ```sql
+    CREATE INDEX idx_estado ON devoluciones(estado);
+    CREATE INDEX idx_fecha_creacion ON devoluciones(fecha_creacion);
+    CREATE INDEX idx_usuario_creador ON devoluciones(usuario_creador);
+    CREATE INDEX idx_motivo ON devoluciones(motivo);
+    ```
+  </Step>
+</Steps>
+
+## Application Configuration
+
+<Steps>
+  <Step title="Download Application">
+    Clone or download the DevolutionSync repository:
+
+    ```bash
+    git clone https://github.com/your-org/devolutionsync.git
+    cd devolutionsync
+    ```
+  </Step>
+
+  <Step title="Configure Database Connection">
+    Edit `Config/Conexion.php` with your database credentials:
+
+    ```php Config/Conexion.php
+    <?php
+    class Conexion {
+        public static function Conectar() {
+            // Use environment variables in production
+            $host = getenv('DB_HOST') ?: '192.200.100.40';
+            $db   = getenv('DB_NAME') ?: 'devolutionsync';
+            $user = getenv('DB_USER') ?: 'devolution_user';
+            $pass = getenv('DB_PASS') ?: 'your_secure_password';
+            $charset = 'utf8';
+
+            $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+
+            $opciones = [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES   => false,
+            ];
+
+            try {
+                $pdo = new PDO($dsn, $user, $pass, $opciones);
+                return $pdo;
+            } catch (PDOException $e) {
+                // Log error instead of displaying in production
+                error_log("Database connection failed: " . $e->getMessage());
+                die("Unable to connect to database. Please contact support.");
+            }
+        }
+    }
+    ```
+
+    <Accordion title="Environment Variables (Recommended)">
+    Create a `.env` file for sensitive configuration:
+
+    ```bash .env
+    DB_HOST=192.200.100.40
+    DB_NAME=devolutionsync
+    DB_USER=devolution_user
+    DB_PASS=your_secure_password
+    APP_ENV=production
+    ```
+
+    Load it in your Dockerfile or docker-compose configuration.
+    </Accordion>
+  </Step>
+
+  <Step title="Set File Permissions">
+    Configure proper permissions for uploads and logs:
+
+    ```bash
+    # Create directories
+    mkdir -p uploads/evidencias
+    mkdir -p logs
+
+    # Set ownership (if running as www-data)
+    chown -R www-data:www-data uploads/
+    chown -R www-data:www-data logs/
+
+    # Set permissions
+    chmod -R 755 uploads/
+    chmod -R 755 logs/
+    ```
+  </Step>
+
+  <Step title="Configure Upload Limits">
+    The application accepts evidence files up to 5MB. Verify PHP configuration:
+
+    ```php PanelController.php
+    private function subirEvidencia($archivo) {
+        $directorioDestino = 'uploads/evidencias/';
+        $tamañoMaximo = 5 * 1024 * 1024; // 5MB
+        $extensionesPermitidas = ['jpg', 'jpeg', 'png', 'gif'];
+        
+        if (!file_exists($directorioDestino)) {
+            mkdir($directorioDestino, 0777, true);
+        }
+        
+        if ($archivo['size'] > $tamañoMaximo) {
+            throw new Exception('El archivo excede el tamaño máximo de 5MB');
+        }
+        
+        $extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
+        if (!in_array($extension, $extensionesPermitidas)) {
+            throw new Exception('Formato de archivo no permitido. Use JPG, PNG o GIF');
+        }
+        
+        $nombreArchivo = 'evidencia_' . time() . '_' . uniqid() . '.' . $extension;
+        $rutaCompleta = $directorioDestino . $nombreArchivo;
+        
+        if (move_uploaded_file($archivo['tmp_name'], $rutaCompleta)) {
+            return $rutaCompleta;
+        } else {
+            throw new Exception('Error al subir el archivo de evidencia');
+        }
+    }
+    ```
+
+    Ensure PHP `php.ini` allows sufficient upload sizes:
+
+    ```ini php.ini
+    upload_max_filesize = 10M
+    post_max_size = 10M
+    memory_limit = 256M
+    ```
+  </Step>
+</Steps>
+
+## Docker Deployment
+
+<Steps>
+  <Step title="Review Dockerfile">
+    The provided Dockerfile uses PHP 8.2 with Apache:
+
+    ```dockerfile Dockerfile
+    # Usa la imagen oficial de PHP con Apache
+    FROM php:8.2-apache
+
+    # Habilita extensiones necesarias
+    RUN docker-php-ext-install pdo pdo_mysql mysqli
+
+    # Copia todos los archivos del proyecto al contenedor
+    COPY . /var/www/html/
+
+    # Ajusta permisos
+    RUN chown -R www-data:www-data /var/www/html \
+        && chmod -R 755 /var/www/html
+
+    # Expone el puerto del servidor Apache
+    EXPOSE 80
+    ```
+  </Step>
+
+  <Step title="Configure Docker Compose">
+    Edit `Docker-compose.yml` for your environment:
+
+    ```yaml Docker-compose.yml
+    services:
+      web:
+        build:
+          context: .
+          dockerfile: Dockerfile
+        container_name: Proyecto_UCP
+        ports:
+          - "8097:80"  # Change to 80:80 for production
+        volumes:
+          - ./:/var/www/html  # Remove in production
+        environment:
+          - DB_HOST=192.200.100.40
+          - DB_NAME=devolutionsync
+          - DB_USER=devolution_user
+          - DB_PASS=${DB_PASSWORD}  # From .env file
+        networks:
+          - red_local
+        restart: unless-stopped
+
+    volumes:
+      db_data:
+
+    networks:
+      red_local:
+    ```
+
+    <Warning>
+    Remove the `volumes` mount in production to prevent live code editing. Rebuild the image instead.
+    </Warning>
+  </Step>
+
+  <Step title="Build and Launch">
+    Build the Docker image and start the container:
+
+    ```bash
+    # Build the image
+    docker-compose build
+
+    # Start in detached mode
+    docker-compose up -d
+
+    # Check container status
+    docker ps
+
+    # View logs
+    docker logs -f Proyecto_UCP
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    Test the application is running correctly:
+
+    ```bash
+    # Check web server response
+    curl -I http://localhost:8097
+
+    # Test database connectivity
+    docker exec -it Proyecto_UCP php -r "require 'Config/Conexion.php'; Conexion::Conectar(); echo 'Connected!\n';"
+
+    # Check file permissions
+    docker exec -it Proyecto_UCP ls -la uploads/
+    ```
+  </Step>
+</Steps>
+
+## Security Hardening
+
+<AccordionGroup>
+  <Accordion title="Change Default Passwords">
+    Immediately change all default user passwords:
+
+    ```sql
+    -- Update admin password
+    UPDATE usuarios SET PAS = 'new_secure_password' WHERE USR = 'ANALISTA';
+    
+    -- Update auxiliary password
+    UPDATE usuarios SET PAS = 'new_secure_password' WHERE USR = 'AUXILIAR';
+    
+    -- Update consultation password
+    UPDATE usuarios SET PAS = 'new_secure_password' WHERE USR = 'CONSULTA';
+    ```
+
+    <Note>
+    Consider implementing password hashing using `password_hash()` instead of plain text passwords.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Enable HTTPS">
+    Configure Apache with SSL certificate:
+
+    ```apache
+    <VirtualHost *:443>
+        ServerName devolutionsync.example.com
+        DocumentRoot /var/www/html
+        
+        SSLEngine on
+        SSLCertificateFile /etc/ssl/certs/devolutionsync.crt
+        SSLCertificateKeyFile /etc/ssl/private/devolutionsync.key
+        
+        <Directory /var/www/html>
+            Options -Indexes +FollowSymLinks
+            AllowOverride All
+            Require all granted
+        </Directory>
+    </VirtualHost>
+    ```
+  </Accordion>
+
+  <Accordion title="Session Security">
+    The application implements session timeout (3 minutes of inactivity):
+
+    ```php Views/auth/login.php
+    // Detectar si venimos de un timeout de sesión
+    window.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('timeout') === '1') {
+            showAlert('Su sesión ha expirado por inactividad.', 'warning');
+        }
+    });
+    ```
+
+    Configure PHP session settings in `php.ini`:
+
+    ```ini
+    session.cookie_httponly = 1
+    session.cookie_secure = 1
+    session.use_strict_mode = 1
+    session.cookie_samesite = Strict
+    ```
+  </Accordion>
+
+  <Accordion title="Input Sanitization">
+    The application sanitizes user input to prevent XSS:
+
+    ```php Controllers/PanelController.php
+    private function limpiar($texto) {
+        return htmlspecialchars(trim($texto), ENT_QUOTES, 'UTF-8');
+    }
+    ```
+
+    Ensure all user input is sanitized before display or database insertion.
+  </Accordion>
+
+  <Accordion title="Database Security">
+    All queries use PDO prepared statements to prevent SQL injection:
+
+    ```php Models/DevolucionModel.php
+    public function guardar($datos) {
+        $sql = "INSERT INTO devoluciones (
+                    nit, nombre_cliente, direccion, item_producto, descripcion_producto, 
+                    unidad, kg, motivo, cantidad_und, cantidad_kg, 
+                    observacion, usuario_creador, estado, fecha_creacion, evidencia
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pendiente', NOW(), ?)";
+        
+        $stmt = $this->db->prepare($sql);
+        
+        return $stmt->execute([
+            $datos['nit'],
+            $datos['nombre_cliente'],
+            $datos['direccion'],
+            $datos['item_producto'],
+            $datos['descripcion_producto'],
+            $datos['unidad'],
+            $datos['kg'],
+            $datos['motivo'],
+            $datos['cantidad_und'],
+            $datos['cantidad_kg'],
+            $datos['observacion'],
+            $datos['usuario_creador'],
+            $datos['evidencia'] ?? null
+        ]);
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Post-Installation
+
+<Steps>
+  <Step title="Test User Roles">
+    Verify all three user roles work correctly:
+
+    1. **Admin**: Log in as ANALISTA and access the dashboard
+    2. **Auxiliary**: Log in as AUXILIAR and create a test return
+    3. **Consultation**: Log in as CONSULTA and view records
+  </Step>
+
+  <Step title="Configure Backups">
+    Set up automated database backups:
+
+    ```bash
+    # Create backup script
+    cat > /usr/local/bin/backup-devolutionsync.sh << 'EOF'
+    #!/bin/bash
+    DATE=$(date +%Y%m%d_%H%M%S)
+    mysqldump -u devolution_user -p'your_password' devolutionsync > /backups/devolutionsync_$DATE.sql
+    find /backups -name "devolutionsync_*.sql" -mtime +30 -delete
+    EOF
+
+    chmod +x /usr/local/bin/backup-devolutionsync.sh
+
+    # Add to crontab (daily at 2 AM)
+    echo "0 2 * * * /usr/local/bin/backup-devolutionsync.sh" | crontab -
+    ```
+  </Step>
+
+  <Step title="Monitor Application">
+    Set up monitoring for:
+
+    - Container health: `docker ps` and `docker stats`
+    - Application logs: `docker logs Proyecto_UCP`
+    - Database connections: `SHOW PROCESSLIST;`
+    - Disk space for uploads: `df -h uploads/`
+  </Step>
+
+  <Step title="Document Custom Configuration">
+    Keep records of:
+
+    - Database credentials and connection details
+    - Custom PHP configuration changes
+    - Firewall rules and network configuration
+    - SSL certificate expiration dates
+    - Admin user accounts and responsibilities
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database Connection Errors">
+    **Symptoms**: "Error de conexión (PDO)" message on login
+
+    **Solutions**:
+    1. Verify database credentials in `Config/Conexion.php`
+    2. Check database server is running: `systemctl status mysql`
+    3. Verify firewall allows port 3306: `telnet 192.200.100.40 3306`
+    4. Check database user permissions:
+       ```sql
+       SHOW GRANTS FOR 'devolution_user'@'%';
+       ```
+  </Accordion>
+
+  <Accordion title="File Upload Failures">
+    **Symptoms**: Evidence files not uploading or "Permission denied" errors
+
+    **Solutions**:
+    1. Check directory exists: `ls -la uploads/evidencias/`
+    2. Verify permissions:
+       ```bash
+       docker exec -it Proyecto_UCP chown -R www-data:www-data uploads/
+       docker exec -it Proyecto_UCP chmod -R 755 uploads/
+       ```
+    3. Check PHP upload limits in `php.ini`
+    4. Verify disk space: `df -h`
+  </Accordion>
+
+  <Accordion title="Session Expires Immediately">
+    **Symptoms**: Logged out right after login
+
+    **Solutions**:
+    1. Check PHP session directory is writable:
+       ```bash
+       docker exec -it Proyecto_UCP php -i | grep session.save_path
+       docker exec -it Proyecto_UCP ls -la /tmp
+       ```
+    2. Verify session timeout settings (should be >= 180 seconds)
+    3. Check browser accepts cookies
+    4. Ensure system time is synchronized: `timedatectl`
+  </Accordion>
+
+  <Accordion title="Container Won't Start">
+    **Symptoms**: `docker-compose up` fails or container exits immediately
+
+    **Solutions**:
+    1. Check logs: `docker logs Proyecto_UCP`
+    2. Verify port 8097 is available: `netstat -tuln | grep 8097`
+    3. Test Dockerfile builds successfully: `docker build -t devolutionsync .`
+    4. Check syntax errors in PHP files:
+       ```bash
+       find . -name "*.php" -exec php -l {} \;
+       ```
+  </Accordion>
+
+  <Accordion title="Routing Issues (404 Errors)">
+    **Symptoms**: URLs like `index.php?url=home/index` return 404
+
+    **Solutions**:
+    1. Verify `index.php` front controller is working:
+       ```php
+       // Test routing
+       $url = isset($_GET['url']) ? $_GET['url'] : '';
+       echo "URL: $url";
+       ```
+    2. Check Apache mod_rewrite is enabled:
+       ```bash
+       docker exec -it Proyecto_UCP apache2ctl -M | grep rewrite
+       ```
+    3. Verify controller files exist in `Controllers/` directory
+    4. Check file name case sensitivity (Linux is case-sensitive)
+  </Accordion>
+</AccordionGroup>
+
+## Performance Optimization
+
+<Tabs>
+  <Tab title="Database">
+    - Add indexes on frequently queried columns
+    - Enable MySQL query caching
+    - Use `EXPLAIN` to analyze slow queries
+    - Consider connection pooling for high traffic
+  </Tab>
+
+  <Tab title="PHP">
+    - Enable OPcache for bytecode caching
+    - Increase memory_limit for large operations
+    - Use PHP-FPM instead of mod_php
+    - Enable gzip compression in Apache
+  </Tab>
+
+  <Tab title="Apache">
+    - Enable KeepAlive for persistent connections
+    - Configure appropriate MaxClients/MaxRequestWorkers
+    - Enable mod_deflate for compression
+    - Set appropriate cache headers for static assets
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Admin Guide" icon="user-tie" href="/guides/admin-guide">
+    Learn how to review and approve returns
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth-controller">
+    Explore controller methods and model functions
+  </Card>
+  <Card title="Auxiliary Guide" icon="user" href="/guides/auxiliary-guide">
+    Learn how to register product returns
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/technical/architecture">
+    Understand the system architecture
+  </Card>
+</CardGroup>

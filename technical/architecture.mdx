@@ -1,0 +1,411 @@
+---
+title: 'System Architecture'
+description: 'Comprehensive overview of DevolutionSync technical architecture and design patterns'
+icon: 'diagram-project'
+---
+
+## Overview
+
+DevolutionSync is built on a modern PHP stack using the Model-View-Controller (MVC) architectural pattern. The system provides a robust, scalable foundation for enterprise product return and deviation management.
+
+## Technology Stack
+
+<CardGroup cols={3}>
+  <Card title="PHP 8.2" icon="php">
+    Server-side application logic
+  </Card>
+  <Card title="Apache 2.4" icon="server">
+    Web server with mod_rewrite
+  </Card>
+  <Card title="MySQL 8.0" icon="database">
+    Relational database storage
+  </Card>
+</CardGroup>
+
+### Core Technologies
+
+- **Runtime**: PHP 8.2 with Apache 2.4
+- **Database**: MySQL 8.0 with PDO driver
+- **Extensions**: `pdo`, `pdo_mysql`, `mysqli`
+- **Architecture**: MVC pattern with front controller
+- **Session Management**: Native PHP sessions with security features
+
+## Application Architecture
+
+### High-Level Architecture
+
+The system follows a layered architecture with clear separation of concerns:
+
+```
+┌─────────────────────────────────────┐
+│         Client Browser              │
+└──────────────┬──────────────────────┘
+               │ HTTP Request
+               ▼
+┌─────────────────────────────────────┐
+│      Apache Web Server (Port 80)    │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│      index.php (Front Controller)   │
+│  • URL Routing                      │
+│  • Session Initialization           │
+│  • Controller Dispatch              │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│         Controllers Layer           │
+│  • AuthController                   │
+│  • AdminController                  │
+│  • PanelController                  │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│           Models Layer              │
+│  • DevolucionModel                  │
+│  • ProductoModel                    │
+│  • ConsultaModel                    │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│      Conexion (PDO Database)        │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│          MySQL Database             │
+│  • devoluciones                     │
+│  • usuarios                         │
+│  • notificaciones                   │
+└─────────────────────────────────────┘
+```
+
+## Request Flow
+
+### Front Controller Pattern
+
+All HTTP requests are routed through `index.php`, which acts as the front controller:
+
+```php index.php
+<?php
+// 1. Load configuration
+require_once 'Config/Conexion.php';
+
+// 2. Start session
+if (session_status() === PHP_SESSION_NONE) session_start();
+
+// 3. Determine requested URL
+$url = isset($_GET['url']) ? $_GET['url'] : '';
+
+if (empty($url)) {
+    if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
+        // Redirect to dashboard if logged in
+    }
+}
+
+// 4. Parse URL and route request
+$urlParts = explode('/', rtrim($url, '/'));
+$controllerName = ucfirst($urlParts[0]) . 'Controller';
+$method = isset($urlParts[1]) ? $urlParts[1] : 'index';
+
+// 5. Execute controller method
+$controllerPath = 'Controllers/' . $controllerName . '.php';
+
+if (file_exists($controllerPath)) {
+    require_once $controllerPath;
+    if (class_exists($controllerName)) {
+        $controller = new $controllerName();
+        if (method_exists($controller, $method)) {
+            $controller->{$method}();
+        } else {
+            die("Error: Method '$method' does not exist.");
+        }
+    }
+} else {
+    die("Error: Controller '$controllerName' not found.");
+}
+```
+
+### URL Routing Examples
+
+<CodeGroup>
+```bash Login Request
+GET /index.php?url=auth/login
+├─> Controller: AuthController
+├─> Method: login()
+└─> View: Views/auth/login.php
+```
+
+```bash Admin Panel
+GET /index.php?url=admin/index
+├─> Controller: AdminController
+├─> Method: index()
+└─> View: Views/admin/panel_administrador.php
+```
+
+```bash Review Action
+POST /index.php?url=admin/revisar
+├─> Controller: AdminController
+├─> Method: revisar()
+└─> Redirect: index.php?url=admin/index&msg=success
+```
+</CodeGroup>
+
+<Note>
+The routing system uses `.htaccess` with `mod_rewrite` to clean URLs and route all requests through `index.php`.
+</Note>
+
+## Session Management
+
+### Authentication Flow
+
+DevolutionSync implements role-based access control (RBAC) with three user levels:
+
+```php AuthController.php (excerpt)
+private function getRedirectUrl($grado) {
+    switch ($grado) {
+        case 1: 
+            // Administrator - Full access
+            return 'index.php?url=home/index'; 
+        case 2: 
+            // Auxiliary - Create deviations
+            return 'index.php?url=devolucion/crear'; 
+        case 3: 
+            // Consultant - Read-only access
+            return 'index.php?url=consulta/index';
+        default: 
+            return 'index.php?url=auth/index';
+    }
+}
+```
+
+### Session Security Features
+
+<Accordion title="Session Initialization">
+```php
+if (session_status() === PHP_SESSION_NONE) session_start();
+$_SESSION['user'] = $user['USR'];
+$_SESSION['nombre'] = $user['NOMBRE'];
+$_SESSION['grado'] = $user['GRADO'];
+$_SESSION['logged_in'] = true;
+$_SESSION['last_activity'] = time();
+
+session_regenerate_id(true); // Prevent session fixation
+```
+</Accordion>
+
+<Accordion title="Access Control Middleware">
+```php AdminController.php (excerpt)
+public function __construct() {
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    
+    // Verify authentication and permissions (Only Grade 1 - Administrator)
+    if (!isset($_SESSION['logged_in']) || $_SESSION['grado'] != 1) {
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+    
+    $this->model = new DevolucionModel();
+    $this->consultaModel = new ConsultaModel();
+}
+```
+</Accordion>
+
+<Warning>
+All controllers check session status in their constructors to enforce authentication and authorization before executing any business logic.
+</Warning>
+
+## Database Connection
+
+### PDO Connection Management
+
+The `Conexion` class provides a centralized database connection using PDO:
+
+```php config/conexion.php
+<?php
+class Conexion {
+    public static function Conectar() {
+        // Database credentials
+        $host = '192.200.100.40';
+        $db   = 'devolutionsync';
+        $user = 'SANMARINO';
+        $pass = 'sanmarino2021*';
+        $charset = 'utf8';
+
+        // Connection string
+        $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+
+        $opciones = [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES   => false,
+        ];
+
+        try {
+            $pdo = new PDO($dsn, $user, $pass, $opciones);
+            return $pdo;
+        } catch (PDOException $e) {
+            die("Connection error (PDO): " . $e->getMessage());
+        }
+    }
+}
+```
+
+### Connection Features
+
+- **Error Handling**: Exceptions for all database errors
+- **Fetch Mode**: Associative arrays by default
+- **Prepared Statements**: Real prepared statements (not emulated)
+- **UTF-8 Support**: Full Unicode character support
+- **Singleton Pattern**: Static method ensures consistent connections
+
+## File Upload Handling
+
+### Evidence Upload System
+
+DevolutionSync handles file uploads for deviation evidence:
+
+<Steps>
+  <Step title="File Validation">
+    Validates file type, size, and format before processing
+  </Step>
+  <Step title="Secure Storage">
+    Stores files in `/uploads` directory with sanitized names
+  </Step>
+  <Step title="Database Reference">
+    Saves file path in `devoluciones.evidencia` column
+  </Step>
+  <Step title="Access Control">
+    Files accessible only to authenticated users
+  </Step>
+</Steps>
+
+```php DevolucionModel.php (excerpt)
+public function guardar($datos) {
+    $sql = "INSERT INTO devoluciones (
+                nit, nombre_cliente, direccion, item_producto, descripcion_producto, 
+                unidad, kg, motivo, cantidad_und, cantidad_kg, 
+                observacion, usuario_creador, estado, fecha_creacion, evidencia
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pendiente', NOW(), ?)";
+    
+    $stmt = $this->db->prepare($sql);
+    
+    return $stmt->execute([
+        // ... other parameters ...
+        $datos['evidencia'] ?? null // Handle null if no evidence
+    ]);
+}
+```
+
+## Security Architecture
+
+### Authentication & Authorization
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="lock">
+    - Password verification
+    - Session regeneration
+    - Login attempt tracking
+    - Secure logout
+  </Card>
+  <Card title="Authorization" icon="shield">
+    - Role-based access (GRADO)
+    - Controller-level checks
+    - Method-level validation
+    - Resource ownership
+  </Card>
+</CardGroup>
+
+### Data Security
+
+- **Prepared Statements**: All SQL queries use PDO prepared statements
+- **Input Validation**: Server-side validation in controllers
+- **XSS Prevention**: Output escaping in views
+- **CSRF Protection**: Session-based token validation
+- **SQL Injection**: Prevented through parameterized queries
+
+## Performance Considerations
+
+### Optimization Strategies
+
+1. **Database Indexing**: Primary keys and foreign keys on all tables
+2. **Query Optimization**: Efficient JOIN operations and WHERE clauses
+3. **Connection Pooling**: PDO persistent connections available
+4. **Session Management**: File-based sessions (can be moved to Redis)
+5. **Caching**: Opcache enabled in PHP 8.2
+
+### Scalability
+
+<Note>
+The architecture supports horizontal scaling by:
+- Separating database server from application server
+- Using Docker containers for easy replication
+- Implementing stateless session management (future: Redis)
+- Database replication for read-heavy operations
+</Note>
+
+## Error Handling
+
+### Exception Management
+
+```php AdminController.php (excerpt)
+public function revisar() {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        try {
+            // Validate received data
+            $id = intval($_POST['id_devolucion'] ?? 0);
+            $accion = trim($_POST['accion'] ?? '');
+            
+            if ($id <= 0) {
+                throw new Exception('Invalid deviation ID');
+            }
+            
+            if (!in_array($accion, ['aprobado', 'rechazado'])) {
+                throw new Exception('Invalid action');
+            }
+            
+            // Process review
+            $resultado = $this->model->procesarRevision($id, $accion, $codigo, $obs, $revisor);
+            
+            if ($resultado) {
+                header('Location: index.php?url=admin/index&msg=success');
+            } else {
+                throw new Exception('Database error processing review');
+            }
+            
+        } catch (Exception $e) {
+            error_log("Error in AdminController::revisar - " . $e->getMessage());
+            header('Location: index.php?url=admin/index&msg=error');
+        }
+        exit;
+    }
+}
+```
+
+### Logging Strategy
+
+- **Error Logs**: PHP error_log() for application errors
+- **Database Logs**: Transaction rollback on failures
+- **User Feedback**: Friendly error messages via URL parameters
+- **Debug Mode**: Detailed errors in development environment
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Schema" icon="database" href="/technical/database-schema">
+    Explore complete database structure and relationships
+  </Card>
+  <Card title="MVC Structure" icon="layer-group" href="/technical/mvc-structure">
+    Learn about Controllers, Models, and Views
+  </Card>
+  <Card title="Docker Deployment" icon="docker" href="/technical/docker-deployment">
+    Deploy DevolutionSync with Docker
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth-controller">
+    View complete API documentation
+  </Card>
+</CardGroup>

@@ -1,0 +1,646 @@
+---
+title: 'PanelController'
+description: 'Product return registration controller for auxiliary staff and administrators'
+icon: 'clipboard-list'
+---
+
+## Overview
+
+The `PanelController` handles the registration of new product returns (devoluciones). It provides form display, data validation, file upload handling, and database persistence for return records.
+
+**Source:** `controllers/PanelController.php`
+
+**Access Control:** Grado 1 (Administrator) or Grado 2 (Auxiliary) only
+
+**Dependencies:**
+- `Models/ProductoModel.php` - Product catalog access
+- `Models/DevolucionModel.php` - Return data persistence
+
+---
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the controller with authentication and authorization checks.
+
+**Security Checks:**
+
+1. Starts PHP session if not active
+2. Verifies user is authenticated (`$_SESSION['logged_in']`)
+3. Verifies user has Grado 1 or Grado 2 access
+4. Redirects unauthorized users appropriately:
+   - Not logged in → login page
+   - Wrong grado → home page
+
+<Warning>
+**Access Restriction**
+
+Only users with **Grado 1 (Administrator)** or **Grado 2 (Auxiliary)** can access this controller. Grado 3 users are redirected to the home page.
+</Warning>
+
+**Source Code:**
+```php
+public function __construct() {
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    
+    // Verificar autenticación
+    if (!isset($_SESSION['logged_in'])) {
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+    
+    // Verificar permisos (Solo Admin Grado 1 o Auxiliar Grado 2)
+    if (!isset($_SESSION['grado']) || ($_SESSION['grado'] != 1 && $_SESSION['grado'] != 2)) {
+        header('Location: index.php?url=home/index');
+        exit;
+    }
+    
+    $this->prodModel = new ProductoModel();
+    $this->devModel = new DevolucionModel();
+}
+```
+
+---
+
+## Methods
+
+### auxiliar()
+
+```php
+public function auxiliar(): void
+```
+
+Displays the return registration form with product catalog dropdown.
+
+**Functionality:**
+- Retrieves all products from database
+- Loads registration form view
+- Populates product dropdown
+
+**Data Provided to View:**
+
+<ResponseField name="productos" type="array">
+  Complete product catalog array with item codes and descriptions
+</ResponseField>
+
+<ResponseField name="titulo" type="string">
+  Page title: "Registro de Devolución - DevolutionSync"
+</ResponseField>
+
+**View Rendered:** `Views/admin/panel_auxiliar.php`
+
+**Example Usage:**
+```
+GET index.php?url=panel/auxiliar
+```
+
+**Source Code:**
+```php
+public function auxiliar() {
+    $productos = $this->prodModel->listarTodos();
+    $titulo = "Registro de Devolución - DevolutionSync";
+    require_once 'Views/admin/panel_auxiliar.php';
+}
+```
+
+---
+
+### registrar()
+
+```php
+public function registrar(): void
+```
+
+Processes return registration form submission with validation, file upload, and database persistence.
+
+**HTTP Method:** `POST`
+
+**POST Parameters:**
+
+<ParamField body="producto" type="string" required>
+  Product item code from catalog
+</ParamField>
+
+<ParamField body="nit" type="string" required>
+  Customer NIT (tax identification number)
+</ParamField>
+
+<ParamField body="nombre_cliente" type="string" required>
+  Customer full name
+</ParamField>
+
+<ParamField body="direccion" type="string" required>
+  Customer address
+</ParamField>
+
+<ParamField body="motivo" type="string" required>
+  Reason for return (e.g., "Producto defectuoso")
+</ParamField>
+
+<ParamField body="cantidad_und" type="float" required>
+  Quantity in units (must be > 0)
+</ParamField>
+
+<ParamField body="cantidad_kg" type="float" required>
+  Quantity in kilograms (must be ≥ 0)
+</ParamField>
+
+<ParamField body="observacion" type="string" required>
+  Additional observations/notes
+</ParamField>
+
+**File Upload Parameter:**
+
+<ParamField body="evidencia" type="file" default="optional">
+  Evidence image file (JPG, PNG, or GIF, max 5MB)
+</ParamField>
+
+**Process Flow:**
+
+<Accordion title="Registration Process Steps">
+
+1. **Validate product selection**
+   - Check `$_POST['producto']` is not empty
+   - Retrieve product data from database
+   - Throw exception if product not found
+
+2. **Validate all required fields**
+   - Call `validarCampos($_POST)`
+   - Check all mandatory fields present
+   - Validate quantity ranges
+
+3. **Handle file upload (if present)**
+   - Check `$_FILES['evidencia']` for upload
+   - Call `subirEvidencia()` if file provided
+   - Store file path or null
+
+4. **Prepare data array**
+   - Sanitize all text inputs with `limpiar()`
+   - Merge POST data with product info
+   - Add creator username from session
+
+5. **Save to database**
+   - Call `DevolucionModel::guardar($datos)`
+   - Set success/error message in session
+
+6. **Redirect to form**
+   - Always redirects to `index.php?url=panel/auxiliar`
+   - Alert message displayed from session
+
+</Accordion>
+
+**Data Structure Saved:**
+
+```php
+$datos = [
+    'nit' => string,                    // Sanitized customer NIT
+    'nombre_cliente' => string,         // Sanitized customer name
+    'direccion' => string,              // Sanitized address
+    'item_producto' => string,          // Product item code
+    'descripcion_producto' => string,   // Product description
+    'unidad' => string,                 // Unit type (default: 'UND')
+    'kg' => float,                      // Product kg value
+    'motivo' => string,                 // Return reason
+    'cantidad_und' => float,            // Quantity in units
+    'cantidad_kg' => float,             // Quantity in kg
+    'observacion' => string,            // Observations
+    'usuario_creador' => string,        // $_SESSION['user']
+    'evidencia' => string|null          // File path or null
+];
+```
+
+**Session Alerts:**
+
+<ResponseField name="$_SESSION['alerta']['tipo']" type="string">
+  Alert type: `"success"` or `"error"`
+</ResponseField>
+
+<ResponseField name="$_SESSION['alerta']['msg']" type="string">
+  Alert message to display to user
+</ResponseField>
+
+**Success Alert:**
+```php
+[
+    'tipo' => 'success',
+    'msg' => '✅ Devolución registrada correctamente. ID de registro generado.'
+]
+```
+
+**Error Alert:**
+```php
+[
+    'tipo' => 'error',
+    'msg' => '❌ {exception_message}'
+]
+```
+
+**Source Code:**
+```php
+public function registrar() {
+    if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+        try {
+            // 1. Obtener datos del producto seleccionado
+            $itemProducto = $_POST['producto'] ?? '';
+            
+            if (empty($itemProducto)) {
+                throw new Exception('Debe seleccionar un producto');
+            }
+            
+            $producto = $this->prodModel->obtenerPorItem($itemProducto);
+            
+            if (!$producto) {
+                throw new Exception('Producto no encontrado');
+            }
+            
+            // 2. Validar campos obligatorios
+            $this->validarCampos($_POST);
+            
+            // 3. Manejar subida de evidencia (si existe)
+            $rutaEvidencia = null;
+            if (isset($_FILES['evidencia']) && $_FILES['evidencia']['error'] == UPLOAD_ERR_OK) {
+                $rutaEvidencia = $this->subirEvidencia($_FILES['evidencia']);
+            }
+            
+            // 4. Preparar array de datos para guardar
+            $datos = [
+                'nit' => $this->limpiar($_POST['nit']),
+                'nombre_cliente' => $this->limpiar($_POST['nombre_cliente']),
+                'direccion' => $this->limpiar($_POST['direccion']),
+                'item_producto' => $producto['item'],
+                'descripcion_producto' => $producto['descripcion'],
+                'unidad' => $producto['unidad'] ?? 'UND',
+                'kg' => $producto['kg'] ?? 0,
+                'motivo' => $this->limpiar($_POST['motivo']),
+                'cantidad_und' => floatval($_POST['cantidad_und']),
+                'cantidad_kg' => floatval($_POST['cantidad_kg']),
+                'observacion' => $this->limpiar($_POST['observacion']),
+                'usuario_creador' => $_SESSION['user'],
+                'evidencia' => $rutaEvidencia
+            ];
+            
+            // 5. Guardar en la base de datos
+            if ($this->devModel->guardar($datos)) {
+                $_SESSION['alerta'] = [
+                    'tipo' => 'success', 
+                    'msg' => '✅ Devolución registrada correctamente. ID de registro generado.'
+                ];
+            } else {
+                throw new Exception('Error al guardar en la base de datos');
+            }
+            
+        } catch (Exception $e) {
+            $_SESSION['alerta'] = [
+                'tipo' => 'error', 
+                'msg' => '❌ ' . $e->getMessage()
+            ];
+        }
+        
+        // Redirigir de vuelta al formulario
+        header('Location: index.php?url=panel/auxiliar');
+        exit;
+    }
+}
+```
+
+---
+
+### validarCampos()
+
+```php
+private function validarCampos(array $post): void
+```
+
+Validates all required form fields and quantity constraints.
+
+**Parameters:**
+
+<ParamField query="post" type="array" required>
+  $_POST array from form submission
+</ParamField>
+
+**Validation Rules:**
+
+<CodeGroup>
+```php Required Fields
+$camposRequeridos = [
+    'nit' => 'NIT del cliente',
+    'nombre_cliente' => 'Nombre del cliente',
+    'direccion' => 'Dirección',
+    'producto' => 'Producto',
+    'motivo' => 'Motivo',
+    'cantidad_und' => 'Cantidad en unidades',
+    'cantidad_kg' => 'Cantidad en kilogramos',
+    'observacion' => 'Observaciones'
+];
+```
+
+```php Quantity Validations
+// cantidad_und must be > 0
+if (floatval($post['cantidad_und']) <= 0) {
+    throw new Exception('La cantidad en unidades debe ser mayor a 0');
+}
+
+// cantidad_kg must be >= 0
+if (floatval($post['cantidad_kg']) < 0) {
+    throw new Exception('La cantidad en kilogramos no puede ser negativa');
+}
+```
+</CodeGroup>
+
+**Exceptions Thrown:**
+
+| Exception Message | Cause |
+|-------------------|-------|
+| `El campo '{nombre}' es obligatorio` | Required field is empty |
+| `La cantidad en unidades debe ser mayor a 0` | cantidad_und ≤ 0 |
+| `La cantidad en kilogramos no puede ser negativa` | cantidad_kg < 0 |
+
+**Source Code:**
+```php
+private function validarCampos($post) {
+    $camposRequeridos = [
+        'nit' => 'NIT del cliente',
+        'nombre_cliente' => 'Nombre del cliente',
+        'direccion' => 'Dirección',
+        'producto' => 'Producto',
+        'motivo' => 'Motivo',
+        'cantidad_und' => 'Cantidad en unidades',
+        'cantidad_kg' => 'Cantidad en kilogramos',
+        'observacion' => 'Observaciones'
+    ];
+    
+    foreach ($camposRequeridos as $campo => $nombre) {
+        if (empty($post[$campo])) {
+            throw new Exception("El campo '{$nombre}' es obligatorio");
+        }
+    }
+    
+    // Validar que las cantidades sean números positivos
+    if (floatval($post['cantidad_und']) <= 0) {
+        throw new Exception('La cantidad en unidades debe ser mayor a 0');
+    }
+    
+    if (floatval($post['cantidad_kg']) < 0) {
+        throw new Exception('La cantidad en kilogramos no puede ser negativa');
+    }
+}
+```
+
+---
+
+### subirEvidencia()
+
+```php
+private function subirEvidencia(array $archivo): string
+```
+
+Handles secure file upload for evidence images with validation and unique naming.
+
+**Parameters:**
+
+<ParamField query="archivo" type="array" required>
+  $_FILES['evidencia'] array from file upload
+</ParamField>
+
+**Return Value:**
+
+<ResponseField name="return" type="string">
+  Relative path to uploaded file (e.g., `uploads/evidencias/evidencia_1234567890_abc123.jpg`)
+</ResponseField>
+
+**Upload Configuration:**
+
+<CodeGroup>
+```php Upload Settings
+$directorioDestino = 'uploads/evidencias/';
+$tamañoMaximo = 5 * 1024 * 1024; // 5MB
+$extensionesPermitidas = ['jpg', 'jpeg', 'png', 'gif'];
+```
+
+```php File Naming
+$nombreArchivo = 'evidencia_' . time() . '_' . uniqid() . '.' . $extension;
+// Example: evidencia_1709654321_65f8a1b2c3d4e.jpg
+```
+</CodeGroup>
+
+**Validation Checks:**
+
+1. **File Size Validation**
+   - Maximum: 5MB (5,242,880 bytes)
+   - Throws: `"El archivo excede el tamaño máximo de 5MB"`
+
+2. **File Extension Validation**
+   - Allowed: JPG, JPEG, PNG, GIF (case-insensitive)
+   - Throws: `"Formato de archivo no permitido. Use JPG, PNG o GIF"`
+
+3. **Upload Success Check**
+   - Verifies `move_uploaded_file()` success
+   - Throws: `"Error al subir el archivo de evidencia"`
+
+**Directory Creation:**
+
+Automatically creates `uploads/evidencias/` directory if it doesn't exist:
+```php
+if (!file_exists($directorioDestino)) {
+    mkdir($directorioDestino, 0777, true);
+}
+```
+
+<Warning>
+**Security Considerations:**
+
+1. Directory permissions `0777` are overly permissive - consider `0755`
+2. No MIME type validation - only extension checked
+3. No image content validation - malicious files could be renamed
+4. Consider implementing:
+   - MIME type checking with `mime_content_type()`
+   - Image reprocessing with GD/Imagick
+   - Virus scanning for production
+</Warning>
+
+**Source Code:**
+```php
+private function subirEvidencia($archivo) {
+    // Configuración
+    $directorioDestino = 'uploads/evidencias/';
+    $tamañoMaximo = 5 * 1024 * 1024; // 5MB
+    $extensionesPermitidas = ['jpg', 'jpeg', 'png', 'gif'];
+    
+    // Crear directorio si no existe
+    if (!file_exists($directorioDestino)) {
+        mkdir($directorioDestino, 0777, true);
+    }
+    
+    // Validar tamaño
+    if ($archivo['size'] > $tamañoMaximo) {
+        throw new Exception('El archivo excede el tamaño máximo de 5MB');
+    }
+    
+    // Validar extensión
+    $extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
+    if (!in_array($extension, $extensionesPermitidas)) {
+        throw new Exception('Formato de archivo no permitido. Use JPG, PNG o GIF');
+    }
+    
+    // Generar nombre único
+    $nombreArchivo = 'evidencia_' . time() . '_' . uniqid() . '.' . $extension;
+    $rutaCompleta = $directorioDestino . $nombreArchivo;
+    
+    // Mover archivo
+    if (move_uploaded_file($archivo['tmp_name'], $rutaCompleta)) {
+        return $rutaCompleta;
+    } else {
+        throw new Exception('Error al subir el archivo de evidencia');
+    }
+}
+```
+
+**Example File Upload HTML:**
+
+```html
+<form action="index.php?url=panel/registrar" method="POST" enctype="multipart/form-data">
+    <label>Evidencia fotográfica (opcional)</label>
+    <input type="file" name="evidencia" accept=".jpg,.jpeg,.png,.gif">
+    <small>Máximo 5MB - Formatos: JPG, PNG, GIF</small>
+    
+    <!-- Other form fields... -->
+    
+    <button type="submit">Registrar Devolución</button>
+</form>
+```
+
+---
+
+### limpiar()
+
+```php
+private function limpiar(string $texto): string
+```
+
+Sanitizes and escapes text input to prevent XSS attacks.
+
+**Parameters:**
+
+<ParamField query="texto" type="string" required>
+  Raw text input from user
+</ParamField>
+
+**Return Value:**
+
+<ResponseField name="return" type="string">
+  Trimmed and HTML-escaped text safe for output
+</ResponseField>
+
+**Processing Steps:**
+
+1. **Trim whitespace** - Removes leading/trailing spaces
+2. **HTML encode** - Converts special characters to HTML entities
+3. **Quote escaping** - Escapes both single and double quotes
+4. **UTF-8 encoding** - Ensures proper character encoding
+
+**Implementation:**
+
+```php
+return htmlspecialchars(trim($texto), ENT_QUOTES, 'UTF-8');
+```
+
+**Character Conversion Examples:**
+
+| Input | Output |
+|-------|--------|
+| `<script>alert('XSS')</script>` | `&lt;script&gt;alert(&#039;XSS&#039;)&lt;/script&gt;` |
+| `Cliente "Premium"` | `Cliente &quot;Premium&quot;` |
+| `O'Reilly & Sons` | `O&#039;Reilly &amp; Sons` |
+
+<Note>
+This method protects against XSS attacks but does NOT prevent SQL injection. Always use prepared statements in Model classes for database queries.
+</Note>
+
+**Source Code:**
+```php
+private function limpiar($texto) {
+    return htmlspecialchars(trim($texto), ENT_QUOTES, 'UTF-8');
+}
+```
+
+---
+
+## Complete Usage Example
+
+### Registration Form HTML
+
+```html
+<form action="index.php?url=panel/registrar" method="POST" enctype="multipart/form-data">
+    <!-- Customer Information -->
+    <input type="text" name="nit" placeholder="NIT del cliente" required>
+    <input type="text" name="nombre_cliente" placeholder="Nombre completo" required>
+    <input type="text" name="direccion" placeholder="Dirección" required>
+    
+    <!-- Product Selection -->
+    <select name="producto" required>
+        <option value="">Seleccione un producto</option>
+        <?php foreach ($productos as $prod): ?>
+            <option value="<?= $prod['item'] ?>">
+                <?= $prod['item'] ?> - <?= $prod['descripcion'] ?>
+            </option>
+        <?php endforeach; ?>
+    </select>
+    
+    <!-- Return Details -->
+    <input type="text" name="motivo" placeholder="Motivo de devolución" required>
+    <input type="number" step="0.01" name="cantidad_und" placeholder="Cantidad (unidades)" required>
+    <input type="number" step="0.01" name="cantidad_kg" placeholder="Cantidad (kg)" required>
+    
+    <!-- Observations -->
+    <textarea name="observacion" placeholder="Observaciones" required></textarea>
+    
+    <!-- Evidence Upload -->
+    <input type="file" name="evidencia" accept=".jpg,.jpeg,.png,.gif">
+    
+    <button type="submit">Registrar Devolución</button>
+</form>
+
+<!-- Display Alert Message -->
+<?php if (isset($_SESSION['alerta'])): ?>
+    <div class="alert alert-<?= $_SESSION['alerta']['tipo'] ?>">
+        <?= $_SESSION['alerta']['msg'] ?>
+    </div>
+    <?php unset($_SESSION['alerta']); ?>
+<?php endif; ?>
+```
+
+---
+
+## Error Handling Summary
+
+**Validation Errors:**
+
+| Error Message | Cause |
+|---------------|-------|
+| `Debe seleccionar un producto` | Empty product field |
+| `Producto no encontrado` | Invalid product item code |
+| `El campo '{nombre}' es obligatorio` | Missing required field |
+| `La cantidad en unidades debe ser mayor a 0` | cantidad_und ≤ 0 |
+| `La cantidad en kilogramos no puede ser negativa` | cantidad_kg < 0 |
+| `El archivo excede el tamaño máximo de 5MB` | File too large |
+| `Formato de archivo no permitido...` | Invalid file extension |
+| `Error al subir el archivo de evidencia` | File upload failed |
+| `Error al guardar en la base de datos` | Database save failed |
+
+**Error Display:**
+
+All errors are caught, stored in `$_SESSION['alerta']`, and displayed on the form page after redirect.
+
+---
+
+## Related Components
+
+- [AuthController](/api/auth-controller) - Authentication (required for access)
+- [AdminController](/api/admin-controller) - Review registered returns
+- [ConsultaController](/api/consulta-controller) - View return history
+- ProductoModel - Product catalog queries
+- DevolucionModel - Return data persistence

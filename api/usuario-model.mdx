@@ -1,0 +1,576 @@
+---
+title: 'UsuarioModel & AuthModel'
+description: 'User management and authentication models for the usuarios database table'
+---
+
+## Overview
+
+DevolutionSync uses two complementary models for user management:
+
+- **`UsuarioModel`** - Handles user creation, validation, and listing
+- **`AuthModel`** - Handles authentication and credential verification
+
+Both models interact with the `usuarios` database table, which stores user credentials and role information.
+
+**Database Table**: `usuarios`
+
+**Key Responsibilities**:
+- User registration and validation
+- Authentication and login
+- Role-based access control (GRADO system)
+- User listing for administration
+
+---
+
+## UsuarioModel
+
+### Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the model and establishes database connection using `Conexion::Conectar()`.
+
+---
+
+### existeUsuario()
+
+```php
+public function existeUsuario($usr)
+```
+
+Checks if a username already exists in the system. Used during registration to prevent duplicate usernames.
+
+<ParamField path="usr" type="string" required>
+  Username to check for existence
+</ParamField>
+
+**Returns**: `bool` - `true` if username exists, `false` otherwise
+
+<CodeGroup>
+```php SQL Query
+SELECT USR FROM usuarios WHERE USR = ?
+```
+
+```php Usage Example
+$model = new UsuarioModel();
+
+if ($model->existeUsuario('aux_user01')) {
+    echo "El usuario ya existe. Elija otro nombre.";
+} else {
+    echo "Nombre de usuario disponible";
+}
+```
+
+```php Registration Validation
+// Validation before creating new user
+$username = $_POST['username'];
+$model = new UsuarioModel();
+
+if ($model->existeUsuario($username)) {
+    $errors[] = 'El nombre de usuario ya está en uso';
+} elseif (strlen($username) < 4) {
+    $errors[] = 'El nombre de usuario debe tener al menos 4 caracteres';
+} else {
+    // Proceed with registration
+    $model->guardar($username, $password, $nombre, $grado);
+}
+```
+</CodeGroup>
+
+---
+
+### guardar()
+
+```php
+public function guardar($usr, $pas, $nombre, $grado)
+```
+
+Creates a new user account in the system. Typically called by administrators to register new auxiliary users or other administrators.
+
+<ParamField path="usr" type="string" required>
+  Username for login (must be unique)
+</ParamField>
+
+<ParamField path="pas" type="string" required>
+  User password (should be hashed before calling this method)
+</ParamField>
+
+<ParamField path="nombre" type="string" required>
+  Full name or display name of the user
+</ParamField>
+
+<ParamField path="grado" type="int" required>
+  User role/permission level:
+  - `1` = Administrator (full access)
+  - `2` = Auxiliary (can register returns)
+  - `3` = Consultation (read-only access)
+</ParamField>
+
+**Returns**: `bool` - `true` on successful insertion, `false` on failure
+
+<CodeGroup>
+```php SQL Query
+INSERT INTO usuarios (USR, PAS, NOMBRE, GRADO) 
+VALUES (?, ?, ?, ?)
+```
+
+```php Usage Example with Hashing
+$model = new UsuarioModel();
+
+// Hash password before storing
+$hashedPassword = password_hash('user_password123', PASSWORD_BCRYPT);
+
+$resultado = $model->guardar(
+    usr: 'aux_user01',
+    pas: $hashedPassword,
+    nombre: 'Juan Pérez',
+    grado: 2  // Auxiliary user
+);
+
+if ($resultado) {
+    echo "Usuario creado exitosamente";
+} else {
+    echo "Error al crear usuario";
+}
+```
+
+```php Controller Registration Handler
+// Controllers/UsuarioController.php
+if ($_POST['accion'] === 'crear_usuario') {
+    $usr = trim($_POST['username']);
+    $pas = password_hash($_POST['password'], PASSWORD_BCRYPT);
+    $nombre = trim($_POST['nombre_completo']);
+    $grado = intval($_POST['rol']);
+    
+    // Validate
+    $model = new UsuarioModel();
+    if ($model->existeUsuario($usr)) {
+        echo json_encode(['success' => false, 'mensaje' => 'Usuario ya existe']);
+        exit;
+    }
+    
+    // Create user
+    $resultado = $model->guardar($usr, $pas, $nombre, $grado);
+    echo json_encode(['success' => $resultado]);
+}
+```
+</CodeGroup>
+
+<Warning>
+  **Security Critical**: Always hash passwords using `password_hash()` before passing them to `guardar()`. Never store plaintext passwords. The model does not perform hashing internally - this is the caller's responsibility.
+</Warning>
+
+---
+
+### listarTodos()
+
+```php
+public function listarTodos()
+```
+
+Retrieves all users from the system, ordered by role (GRADO) and then by name. Used for user management interfaces and administrative dashboards. Excludes password fields for security.
+
+**Returns**: `array` - Array of associative arrays with user information
+
+<ResponseField name="USR" type="string">
+  Username (login identifier)
+</ResponseField>
+
+<ResponseField name="NOMBRE" type="string">
+  User's full name or display name
+</ResponseField>
+
+<ResponseField name="GRADO" type="int">
+  User role: 1 (Admin), 2 (Auxiliary), 3 (Consultation)
+</ResponseField>
+
+<CodeGroup>
+```php SQL Query
+SELECT USR, NOMBRE, GRADO 
+FROM usuarios 
+ORDER BY GRADO, NOMBRE
+```
+
+```php Usage Example
+$model = new UsuarioModel();
+$usuarios = $model->listarTodos();
+
+foreach ($usuarios as $usuario) {
+    $rol = match($usuario['GRADO']) {
+        1 => 'Administrador',
+        2 => 'Auxiliar',
+        3 => 'Consulta',
+        default => 'Desconocido'
+    };
+    
+    echo "{$usuario['NOMBRE']} (@{$usuario['USR']}) - {$rol}\n";
+}
+```
+
+```php HTML Table Display
+<table>
+    <thead>
+        <tr>
+            <th>Usuario</th>
+            <th>Nombre</th>
+            <th>Rol</th>
+            <th>Acciones</th>
+        </tr>
+    </thead>
+    <tbody>
+        <?php
+        $model = new UsuarioModel();
+        $usuarios = $model->listarTodos();
+        foreach ($usuarios as $u) {
+            $rolNombre = ['', 'Administrador', 'Auxiliar', 'Consulta'][$u['GRADO']];
+            echo "<tr>";
+            echo "<td>{$u['USR']}</td>";
+            echo "<td>{$u['NOMBRE']}</td>";
+            echo "<td>{$rolNombre}</td>";
+            echo "<td><button onclick='editUser(\"{$u['USR']}\")''>Editar</button></td>";
+            echo "</tr>";
+        }
+        ?>
+    </tbody>
+</table>
+```
+</CodeGroup>
+
+<Note>
+  The query intentionally excludes the `PAS` field to prevent accidental password exposure. Passwords should never be retrieved or displayed in user listing interfaces.
+</Note>
+
+---
+
+## AuthModel
+
+### Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the model and establishes database connection using `Conexion::Conectar()`.
+
+---
+
+### buscarUsuario()
+
+```php
+public function buscarUsuario($username)
+```
+
+Retrieves complete user information including hashed password for authentication purposes. This method should only be used during login flows.
+
+<ParamField path="username" type="string" required>
+  Username to authenticate
+</ParamField>
+
+**Returns**: `array|false` - Associative array with user data, or `false` if user not found
+
+<ResponseField name="USR" type="string">
+  Username (matches search parameter)
+</ResponseField>
+
+<ResponseField name="PAS" type="string">
+  Hashed password (use with `password_verify()`)
+</ResponseField>
+
+<ResponseField name="GRADO" type="int">
+  User role: 1 (Admin), 2 (Auxiliary), 3 (Consultation)
+</ResponseField>
+
+<ResponseField name="NOMBRE" type="string">
+  User's full name or display name
+</ResponseField>
+
+<CodeGroup>
+```php SQL Query
+SELECT USR, PAS, GRADO, NOMBRE 
+FROM usuarios 
+WHERE USR = ?
+```
+
+```php Login Authentication Example
+// Controllers/LoginController.php
+session_start();
+
+$username = $_POST['username'] ?? '';
+$password = $_POST['password'] ?? '';
+
+if (empty($username) || empty($password)) {
+    echo json_encode(['success' => false, 'mensaje' => 'Complete todos los campos']);
+    exit;
+}
+
+$authModel = new AuthModel();
+$usuario = $authModel->buscarUsuario($username);
+
+// Verify user exists and password matches
+if ($usuario && password_verify($password, $usuario['PAS'])) {
+    // Authentication successful
+    $_SESSION['usuario'] = $usuario['USR'];
+    $_SESSION['nombre'] = $usuario['NOMBRE'];
+    $_SESSION['grado'] = $usuario['GRADO'];
+    
+    echo json_encode([
+        'success' => true,
+        'redirect' => '/dashboard.php'
+    ]);
+} else {
+    // Authentication failed
+    echo json_encode([
+        'success' => false,
+        'mensaje' => 'Usuario o contraseña incorrectos'
+    ]);
+}
+```
+
+```php Session-Based Authorization
+// Middleware/auth_check.php
+session_start();
+
+function requireLogin() {
+    if (!isset($_SESSION['usuario'])) {
+        header('Location: /login.php');
+        exit;
+    }
+}
+
+function requireAdmin() {
+    requireLogin();
+    if ($_SESSION['grado'] != 1) {
+        header('Location: /403.php');
+        exit;
+    }
+}
+
+function requireMinRole($minGrado) {
+    requireLogin();
+    if ($_SESSION['grado'] > $minGrado) {
+        header('Location: /403.php');
+        exit;
+    }
+}
+```
+</CodeGroup>
+
+<Warning>
+  **Security Critical**:
+  - Always use `password_verify()` to check passwords - never compare hashes directly
+  - Never log or display password hashes
+  - Implement rate limiting on login attempts to prevent brute force attacks
+  - Use HTTPS for all login forms to prevent credential interception
+</Warning>
+
+---
+
+## Database Schema
+
+**Table**: `usuarios`
+
+| Column | Type | Description | Constraints |
+|--------|------|-------------|-------------|
+| `USR` | VARCHAR(50) | Username for login | PRIMARY KEY, UNIQUE |
+| `PAS` | VARCHAR(255) | Hashed password (bcrypt) | NOT NULL |
+| `NOMBRE` | VARCHAR(100) | Full name or display name | NOT NULL |
+| `GRADO` | INT | Role/permission level | NOT NULL, CHECK (1-3) |
+
+### GRADO Values
+
+The `GRADO` field implements role-based access control:
+
+| GRADO | Role Name | Permissions |
+|-------|-----------|-------------|
+| **1** | Administrador | Full system access: approve/reject returns, manage users, view all statistics |
+| **2** | Auxiliar | Register returns, upload evidence, view own submissions |
+| **3** | Consulta | Read-only access: view return history, view statistics (no modifications) |
+
+<Accordion title="Implementing Custom Roles">
+  To extend the role system beyond three levels:
+  
+  1. Add new GRADO values (e.g., 4 = Warehouse Manager, 5 = Finance)
+  2. Update authorization middleware to check specific permissions
+  3. Create permission mapping:
+  
+  ```php
+  class Permissions {
+      const ROLES = [
+          1 => ['admin', 'review', 'create', 'view'],
+          2 => ['create', 'view_own'],
+          3 => ['view'],
+          4 => ['review', 'create', 'view'],  // New: Warehouse
+          5 => ['approve_finance', 'view']    // New: Finance
+      ];
+      
+      public static function can($userGrado, $action) {
+          return in_array($action, self::ROLES[$userGrado] ?? []);
+      }
+  }
+  
+  // Usage
+  if (Permissions::can($_SESSION['grado'], 'approve_finance')) {
+      // Allow financial approval
+  }
+  ```
+</Accordion>
+
+---
+
+## Password Security Best Practices
+
+### Hashing Passwords
+
+```php
+// ✅ CORRECT: Use password_hash with bcrypt
+$hashedPassword = password_hash($plainPassword, PASSWORD_BCRYPT);
+$model->guardar($username, $hashedPassword, $nombre, $grado);
+
+// ❌ WRONG: Never store plaintext
+$model->guardar($username, $plainPassword, $nombre, $grado);
+
+// ❌ WRONG: Never use MD5 or SHA1
+$hashedPassword = md5($plainPassword);
+```
+
+### Verifying Passwords
+
+```php
+// ✅ CORRECT: Use password_verify
+if (password_verify($inputPassword, $user['PAS'])) {
+    // Login successful
+}
+
+// ❌ WRONG: Never compare hashes directly
+if (password_hash($inputPassword, PASSWORD_BCRYPT) === $user['PAS']) {
+    // This will NEVER work - bcrypt generates different salts
+}
+```
+
+### Password Requirements
+
+```php
+function validatePassword($password) {
+    $errors = [];
+    
+    if (strlen($password) < 8) {
+        $errors[] = 'La contraseña debe tener al menos 8 caracteres';
+    }
+    if (!preg_match('/[A-Z]/', $password)) {
+        $errors[] = 'Debe contener al menos una letra mayúscula';
+    }
+    if (!preg_match('/[a-z]/', $password)) {
+        $errors[] = 'Debe contener al menos una letra minúscula';
+    }
+    if (!preg_match('/[0-9]/', $password)) {
+        $errors[] = 'Debe contener al menos un número';
+    }
+    
+    return $errors;
+}
+
+// Usage
+$errors = validatePassword($_POST['password']);
+if (!empty($errors)) {
+    echo json_encode(['success' => false, 'errores' => $errors]);
+    exit;
+}
+```
+
+---
+
+## Complete Authentication Flow
+
+```php
+// 1. Login Form Submission
+if ($_POST['accion'] === 'login') {
+    $username = trim($_POST['username']);
+    $password = $_POST['password'];
+    
+    // Find user
+    $authModel = new AuthModel();
+    $usuario = $authModel->buscarUsuario($username);
+    
+    // Verify credentials
+    if ($usuario && password_verify($password, $usuario['PAS'])) {
+        // Start session
+        session_start();
+        session_regenerate_id(true); // Prevent session fixation
+        
+        $_SESSION['usuario'] = $usuario['USR'];
+        $_SESSION['nombre'] = $usuario['NOMBRE'];
+        $_SESSION['grado'] = $usuario['GRADO'];
+        $_SESSION['login_time'] = time();
+        
+        // Redirect based on role
+        $redirect = match($usuario['GRADO']) {
+            1 => '/admin/dashboard.php',
+            2 => '/auxiliar/registro.php',
+            3 => '/consulta/historial.php',
+            default => '/index.php'
+        };
+        
+        echo json_encode(['success' => true, 'redirect' => $redirect]);
+    } else {
+        // Log failed attempt
+        error_log("Failed login attempt for user: {$username}");
+        
+        echo json_encode([
+            'success' => false,
+            'mensaje' => 'Credenciales incorrectas'
+        ]);
+    }
+}
+
+// 2. Protected Page Check
+session_start();
+
+if (!isset($_SESSION['usuario'])) {
+    header('Location: /login.php');
+    exit;
+}
+
+// Check role permissions
+if ($_SESSION['grado'] > 2) { // Requires Auxiliary or Admin
+    header('Location: /403.php');
+    exit;
+}
+
+// Session timeout (30 minutes)
+if (time() - $_SESSION['login_time'] > 1800) {
+    session_destroy();
+    header('Location: /login.php?timeout=1');
+    exit;
+}
+
+// Update last activity
+$_SESSION['login_time'] = time();
+```
+
+---
+
+## Related Models
+
+- [DevolucionModel](/api/devolucion-model) - Uses `usuario_creador` and `usuario_revisor` fields that reference usuarios
+- [ProductoModel](/api/producto-model) - Products accessed by authenticated users
+
+---
+
+## Security Checklist
+
+<Note>
+  **Production Security Requirements**:
+  
+  - [ ] All passwords hashed with `password_hash(PASSWORD_BCRYPT)`
+  - [ ] Login form uses HTTPS (SSL/TLS certificate installed)
+  - [ ] Session cookies have `httponly` and `secure` flags
+  - [ ] Rate limiting implemented on login endpoint
+  - [ ] Failed login attempts logged for security monitoring
+  - [ ] Session timeout configured (recommended: 30 minutes)
+  - [ ] Password complexity requirements enforced
+  - [ ] SQL injection prevented via prepared statements (already implemented)
+  - [ ] XSS protection via output escaping (`htmlspecialchars()`)
+  - [ ] CSRF tokens implemented on all forms
+</Note>

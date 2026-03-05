@@ -1,0 +1,486 @@
+---
+title: 'AdminController'
+description: 'Administrator panel controller for reviewing and managing product returns'
+icon: 'user-shield'
+---
+
+## Overview
+
+The `AdminController` provides administrative functionality for reviewing, approving, and rejecting product return requests. It is restricted to users with **Grado 1** (Administrator) access level.
+
+**Source:** `controllers/AdminController.php`
+
+**Access Control:** Grado 1 only (Administrator)
+
+**Dependencies:**
+- `Models/DevolucionModel.php` - Return data access and processing
+- `Models/ConsultaModel.php` - History queries
+- `Models/NotificacionModel.php` - Notification system (optional)
+
+---
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the controller with strict access control and model instantiation.
+
+**Security Checks:**
+1. Starts PHP session if not active
+2. Verifies `$_SESSION['logged_in']` is set
+3. Verifies `$_SESSION['grado'] == 1` (Administrator only)
+4. Redirects to login if checks fail
+
+<Warning>
+All methods in this controller require **Grado 1 (Administrator)** privileges. Unauthorized access attempts are automatically redirected to the login page.
+</Warning>
+
+**Source Code:**
+```php
+public function __construct() {
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    
+    // Verificar autenticación y permisos (Solo Grado 1 - Administrador)
+    if (!isset($_SESSION['logged_in']) || $_SESSION['grado'] != 1) {
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+    
+    $this->model = new DevolucionModel();
+    $this->consultaModel = new ConsultaModel();
+}
+```
+
+---
+
+## Methods
+
+### index()
+
+```php
+public function index(): void
+```
+
+Displays the main administrator dashboard with pending returns and recent history.
+
+**Functionality:**
+- Retrieves all pending returns from database
+- Fetches last 50 historical records
+- Loads administrator panel view
+
+**Data Retrieved:**
+
+<ResponseField name="pendientes" type="array">
+  Array of pending return records awaiting review
+</ResponseField>
+
+<ResponseField name="historial" type="array">
+  Recent history (last 50 records) of processed returns
+</ResponseField>
+
+**View Rendered:** `Views/admin/panel_administrador.php`
+
+**Example Usage:**
+```
+GET index.php?url=admin/index
+```
+
+**Query Parameters:**
+
+<ParamField query="msg" type="string">
+  Optional message indicator:
+  - `success` - Review processed successfully
+  - `error` - Error occurred during processing
+</ParamField>
+
+**Source Code:**
+```php
+public function index() {
+    $titulo = "Panel Administrador - DevolutionSync";
+    
+    // Obtener devoluciones pendientes
+    $pendientes = $this->model->obtenerPendientes();
+    
+    // Obtener historial reciente (últimos 50 registros)
+    $historial = $this->consultaModel->obtenerHistorial(50);
+    
+    // Cargar la vista
+    require_once 'Views/admin/panel_administrador.php';
+}
+```
+
+---
+
+### revisar()
+
+```php
+public function revisar(): void
+```
+
+Processes administrator review of a return request - approves or rejects with authorization code and observations.
+
+**HTTP Method:** `POST`
+
+**POST Parameters:**
+
+<ParamField body="id_devolucion" type="integer" required>
+  ID of the return to review (must be > 0)
+</ParamField>
+
+<ParamField body="accion" type="string" required>
+  Review action: `"aprobado"` or `"rechazado"`
+</ParamField>
+
+<ParamField body="codigo_admin" type="string" required>
+  Administrator authorization code
+</ParamField>
+
+<ParamField body="observacion_admin" type="string" required>
+  Administrator's review observations/comments
+</ParamField>
+
+**Validation Rules:**
+
+<Accordion title="Field Validation Logic">
+
+1. **id_devolucion:**
+   - Must be integer
+   - Must be greater than 0
+   - Throws: `"ID de devolución inválido"`
+
+2. **accion:**
+   - Must be exactly `"aprobado"` or `"rechazado"`
+   - Throws: `"Acción inválida. Debe ser 'aprobado' o 'rechazado'"`
+
+3. **codigo_admin:**
+   - Cannot be empty after trim
+   - Throws: `"El código de autorización es obligatorio"`
+
+4. **observacion_admin:**
+   - Cannot be empty after trim
+   - Throws: `"Las observaciones son obligatorias"`
+
+</Accordion>
+
+**Process Flow:**
+
+1. Validates all required fields
+2. Calls `DevolucionModel::procesarRevision()` with parameters
+3. On success: creates notification for return creator
+4. Redirects to admin panel with status message
+5. On error: logs error and redirects with error message
+
+**Redirect URLs:**
+
+- **Success:** `index.php?url=admin/index&msg=success`
+- **Error:** `index.php?url=admin/index&msg=error`
+
+**Session Variables Used:**
+
+<ParamField query="$_SESSION['user']" type="string">
+  Administrator username (used as revisor)
+</ParamField>
+
+<ParamField query="$_SESSION['nombre']" type="string">
+  Administrator full name (fallback if 'user' not set)
+</ParamField>
+
+**Error Handling:**
+
+All exceptions are caught, logged to PHP error log, and user is redirected with error message.
+
+**Source Code:**
+```php
+public function revisar() {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        try {
+            // Validar datos recibidos
+            $id = intval($_POST['id_devolucion'] ?? 0);
+            $accion = trim($_POST['accion'] ?? '');
+            $codigo = trim($_POST['codigo_admin'] ?? '');
+            $obs = trim($_POST['observacion_admin'] ?? '');
+            $revisor = $_SESSION['user'] ?? $_SESSION['nombre'];
+            
+            // Validaciones
+            if ($id <= 0) {
+                throw new Exception('ID de devolución inválido');
+            }
+            
+            if (!in_array($accion, ['aprobado', 'rechazado'])) {
+                throw new Exception('Acción inválida. Debe ser "aprobado" o "rechazado"');
+            }
+            
+            if (empty($codigo)) {
+                throw new Exception('El código de autorización es obligatorio');
+            }
+            
+            if (empty($obs)) {
+                throw new Exception('Las observaciones son obligatorias');
+            }
+            
+            // Procesar la revisión
+            $resultado = $this->model->procesarRevision($id, $accion, $codigo, $obs, $revisor);
+            
+            if ($resultado) {
+                // Intentar crear notificación (opcional, si existe el modelo)
+                $this->crearNotificacion($id, $accion, $obs);
+                
+                // Redirigir con mensaje de éxito
+                header('Location: index.php?url=admin/index&msg=success');
+            } else {
+                throw new Exception('Error al procesar la revisión en la base de datos');
+            }
+            
+        } catch (Exception $e) {
+            // Log del error
+            error_log("Error en AdminController::revisar - " . $e->getMessage());
+            
+            // Redirigir con mensaje de error
+            header('Location: index.php?url=admin/index&msg=error');
+        }
+        exit;
+    } else {
+        // Si no es POST, redirigir al panel
+        header('Location: index.php?url=admin/index');
+        exit;
+    }
+}
+```
+
+**Example Form Submission:**
+
+```html
+<form action="index.php?url=admin/revisar" method="POST">
+    <input type="hidden" name="id_devolucion" value="42">
+    
+    <select name="accion" required>
+        <option value="aprobado">Aprobar</option>
+        <option value="rechazado">Rechazar</option>
+    </select>
+    
+    <input type="text" name="codigo_admin" placeholder="Código de autorización" required>
+    
+    <textarea name="observacion_admin" placeholder="Observaciones" required></textarea>
+    
+    <button type="submit">Procesar Revisión</button>
+</form>
+```
+
+---
+
+### crearNotificacion()
+
+```php
+private function crearNotificacion(int $idDevolucion, string $accion, string $observacion): void
+```
+
+Creates a notification for the user who created the return, informing them of the review outcome.
+
+**Parameters:**
+
+<ParamField query="idDevolucion" type="integer" required>
+  ID of the reviewed return
+</ParamField>
+
+<ParamField query="accion" type="string" required>
+  Review outcome: `"aprobado"` or `"rechazado"`
+</ParamField>
+
+<ParamField query="observacion" type="string" required>
+  Administrator's review observations
+</ParamField>
+
+**Behavior:**
+
+1. Checks if `NotificacionModel` class exists
+2. If not exists: silently returns (optional feature)
+3. If exists: retrieves return data to get creator username
+4. Generates notification message with emoji:
+   - Approved: `"Tu devolución #{id} ha sido APROBADA ✅"`
+   - Rejected: `"Tu devolución #{id} ha sido RECHAZADA ❌"`
+5. Creates notification record in database
+6. On error: logs error but does not interrupt flow
+
+<Note>
+This method is **optional** and fails gracefully if the notification system is not implemented. Errors are logged but do not affect the review process.
+</Note>
+
+**Notification Data Structure:**
+
+```php
+[
+    'id_devolucion' => $idDevolucion,
+    'mensaje' => $mensaje,
+    'usuario_destino' => $devolucion['usuario_creador'],
+    'tipo' => $accion,  // 'aprobado' or 'rechazado'
+    'leida' => false
+]
+```
+
+**Source Code:**
+```php
+private function crearNotificacion($idDevolucion, $accion, $observacion) {
+    try {
+        // Verificar si existe el modelo de notificaciones
+        if (!class_exists('NotificacionModel')) {
+            return; // Si no existe, simplemente retornar
+        }
+        
+        require_once 'Models/NotificacionModel.php';
+        $notifModel = new NotificacionModel();
+        
+        // Obtener información de la devolución
+        $devolucion = $this->consultaModel->obtenerPorId($idDevolucion);
+        
+        if ($devolucion && isset($devolucion['usuario_creador'])) {
+            $estadoTexto = ($accion == 'aprobado') ? 'APROBADA ✅' : 'RECHAZADA ❌';
+            $mensaje = "Tu devolución #{$idDevolucion} ha sido {$estadoTexto}. Observación: {$observacion}";
+            
+            $notifModel->crear([
+                'id_devolucion' => $idDevolucion,
+                'mensaje' => $mensaje,
+                'usuario_destino' => $devolucion['usuario_creador'],
+                'tipo' => $accion,
+                'leida' => false
+            ]);
+        }
+    } catch (Exception $e) {
+        // Solo registrar el error, no detener el flujo
+        error_log("Error al crear notificación: " . $e->getMessage());
+    }
+}
+```
+
+---
+
+### estadisticas()
+
+```php
+public function estadisticas(): void
+```
+
+Displays statistics dashboard with aggregated return data.
+
+**Functionality:**
+
+Retrieves and displays:
+- Total pending returns
+- Total approved returns
+- Total rejected returns
+- Average review processing time
+
+**Data Structure:**
+
+<ResponseField name="stats['total_pendientes']" type="integer">
+  Count of returns with status = 'pendiente'
+</ResponseField>
+
+<ResponseField name="stats['total_aprobadas']" type="integer">
+  Count of returns with status = 'aprobado'
+</ResponseField>
+
+<ResponseField name="stats['total_rechazadas']" type="integer">
+  Count of returns with status = 'rechazado'
+</ResponseField>
+
+<ResponseField name="stats['promedio_revision']" type="float">
+  Average time (in hours/days) for review completion
+</ResponseField>
+
+**View Rendered:** `Views/admin/estadisticas.php`
+
+**Example Usage:**
+```
+GET index.php?url=admin/estadisticas
+```
+
+**Source Code:**
+```php
+public function estadisticas() {
+    $titulo = "Estadísticas - Panel Administrador";
+    
+    // Obtener estadísticas generales
+    $stats = [
+        'total_pendientes' => count($this->model->obtenerPendientes()),
+        'total_aprobadas' => $this->model->contarPorEstado('aprobado'),
+        'total_rechazadas' => $this->model->contarPorEstado('rechazado'),
+        'promedio_revision' => $this->model->obtenerPromedioRevision()
+    ];
+    
+    require_once 'Views/admin/estadisticas.php';
+}
+```
+
+---
+
+## Access Control
+
+<Warning>
+**Administrator-Only Access**
+
+All routes in this controller require:
+- Active authenticated session (`$_SESSION['logged_in'] = true`)
+- Administrator privileges (`$_SESSION['grado'] = 1`)
+
+Unauthorized access attempts result in immediate redirect to login page.
+</Warning>
+
+**Enforcement Location:** Constructor method (runs before all actions)
+
+---
+
+## Workflow Example
+
+<Accordion title="Complete Review Process">
+
+### Administrator Review Flow
+
+1. **Admin logs in** with Grado 1 credentials
+2. **Navigates to dashboard** → `index.php?url=admin/index`
+3. **AdminController::index()** loads pending returns
+4. **Admin selects return** to review from list
+5. **Admin fills review form:**
+   - Selects action (aprobado/rechazado)
+   - Enters authorization code
+   - Writes observations
+6. **Form submits** → `POST index.php?url=admin/revisar`
+7. **AdminController::revisar()** validates all fields
+8. **DevolucionModel::procesarRevision()** updates database
+9. **AdminController::crearNotificacion()** notifies creator
+10. **Redirect to dashboard** with success message
+11. **Creator receives notification** of decision
+
+</Accordion>
+
+---
+
+## Error Handling
+
+**Exception Messages:**
+
+| Error | Cause |
+|-------|-------|
+| `ID de devolución inválido` | id_devolucion ≤ 0 |
+| `Acción inválida...` | accion not 'aprobado' or 'rechazado' |
+| `El código de autorización es obligatorio` | Empty codigo_admin |
+| `Las observaciones son obligatorias` | Empty observacion_admin |
+| `Error al procesar la revisión...` | Database operation failed |
+
+**Error Logging:**
+
+All exceptions are logged with:
+```php
+error_log("Error en AdminController::revisar - " . $e->getMessage());
+```
+
+---
+
+## Related Components
+
+- [AuthController](/api/auth-controller) - Authentication and access control
+- [ConsultaController](/api/consulta-controller) - View return history
+- [PanelController](/api/panel-controller) - Create new returns
+- DevolucionModel - Database operations for returns
+- NotificacionModel - Notification system

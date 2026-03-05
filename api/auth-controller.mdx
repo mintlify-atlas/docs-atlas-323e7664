@@ -1,0 +1,370 @@
+---
+title: 'AuthController'
+description: 'Authentication and session management controller for DevolutionSync'
+icon: 'lock'
+---
+
+## Overview
+
+The `AuthController` handles user authentication, session management, and role-based redirects. It validates credentials, manages login/logout operations, and routes users to appropriate dashboards based on their access level (grado).
+
+**Source:** `controllers/AuthController.php`
+
+**Dependencies:**
+- `Models/AuthModel.php` - User authentication data access
+- PHP Sessions - Session management
+
+---
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the controller by starting a PHP session (if not already active) and instantiating the `AuthModel`.
+
+<Note>
+Sessions are automatically started if `session_status() === PHP_SESSION_NONE`
+</Note>
+
+---
+
+## Methods
+
+### index()
+
+```php
+public function index(): void
+```
+
+Displays the login page. If the user is already authenticated (has active session), redirects them to their role-appropriate dashboard.
+
+**Behavior:**
+- Checks for `$_SESSION['logged_in']`
+- If authenticated: calls `redirigirSegunGrado()` with user's grade
+- If not authenticated: loads `Views/auth/login.php`
+
+**Session Variables Used:**
+
+<ParamField query="$_SESSION['logged_in']" type="boolean">
+  Indicates if user has authenticated successfully
+</ParamField>
+
+<ParamField query="$_SESSION['grado']" type="integer">
+  User's access level (1=Admin, 2=Auxiliary, 3=Consulta)
+</ParamField>
+
+**Example Usage:**
+```
+GET index.php?url=auth/index
+```
+
+---
+
+### login()
+
+```php
+public function login(): void
+```
+
+Authenticates user credentials via POST request and establishes session on success.
+
+**HTTP Method:** `POST`
+
+**POST Parameters:**
+
+<ParamField body="username" type="string" required>
+  User's login username (trimmed)
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's plain-text password
+</ParamField>
+
+**Response:** JSON
+
+<ResponseField name="success" type="boolean">
+  `true` if authentication succeeded, `false` otherwise
+</ResponseField>
+
+<ResponseField name="redirect" type="string">
+  URL to redirect user to on success (role-based)
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Error message if authentication failed
+</ResponseField>
+
+**Session Variables Set on Success:**
+
+<CodeGroup>
+```php Session Variables
+$_SESSION['user']          = $user['USR'];      // Username
+$_SESSION['nombre']        = $user['NOMBRE'];   // Full name
+$_SESSION['grado']         = $user['GRADO'];    // Access level
+$_SESSION['logged_in']     = true;              // Auth flag
+$_SESSION['last_activity'] = time();            // Timestamp
+```
+</CodeGroup>
+
+**Security Features:**
+- Session regeneration with `session_regenerate_id(true)` after successful login
+- Plain-text password comparison: `$password === $user['PAS']`
+
+<Warning>
+The system currently uses plain-text password storage. For production environments, implement password hashing using `password_hash()` and `password_verify()`.
+</Warning>
+
+**Success Response Example:**
+```json
+{
+  "success": true,
+  "redirect": "index.php?url=home/index"
+}
+```
+
+**Error Response Example:**
+```json
+{
+  "success": false,
+  "message": "Credenciales incorrectas"
+}
+```
+
+**Source Code:**
+```php
+public function login() {
+    header('Content-Type: application/json');
+    
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $username = trim($_POST['username'] ?? '');
+        $password = $_POST['password'] ?? '';
+
+        $user = $this->model->buscarUsuario($username);
+
+        if ($user && $password === $user['PAS']) {
+            $_SESSION['user'] = $user['USR'];
+            $_SESSION['nombre'] = $user['NOMBRE'];
+            $_SESSION['grado'] = $user['GRADO'];
+            $_SESSION['logged_in'] = true;
+            $_SESSION['last_activity'] = time();
+            
+            session_regenerate_id(true);
+
+            echo json_encode([
+                'success' => true,
+                'redirect' => $this->getRedirectUrl($user['GRADO'])
+            ]);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Credenciales incorrectas']);
+        }
+    }
+}
+```
+
+---
+
+### logout()
+
+```php
+public function logout(): void
+```
+
+Destroys the user's session and redirects to the login page.
+
+**Behavior:**
+1. Unsets all session variables with `session_unset()`
+2. Destroys the session with `session_destroy()`
+3. Redirects to `index.php?url=auth/index`
+
+**Example Usage:**
+```
+GET index.php?url=auth/logout
+```
+
+**Source Code:**
+```php
+public function logout() {
+    session_unset();
+    session_destroy();
+    header('Location: index.php?url=auth/index');
+    exit;
+}
+```
+
+---
+
+### getRedirectUrl()
+
+```php
+private function getRedirectUrl(int $grado): string
+```
+
+Determines the appropriate redirect URL based on user's access level (grado).
+
+**Parameters:**
+
+<ParamField query="grado" type="integer" required>
+  User's access level:
+  - `1` = Administrator
+  - `2` = Auxiliary staff
+  - `3` = Consulta (view-only)
+</ParamField>
+
+**Return Value:**
+
+<ResponseField name="return" type="string">
+  URL string for role-based redirect
+</ResponseField>
+
+**Redirect Mapping:**
+
+| Grado | Role | Redirect URL |
+|-------|------|-------------|
+| 1 | Administrator | `index.php?url=home/index` |
+| 2 | Auxiliary | `index.php?url=devolucion/crear` |
+| 3 | Consulta | `index.php?url=consulta/index` |
+| default | Unknown | `index.php?url=auth/index` |
+
+**Source Code:**
+```php
+private function getRedirectUrl($grado) {
+    switch ($grado) {
+        case 1: 
+            return 'index.php?url=home/index'; 
+        case 2: 
+            return 'index.php?url=devolucion/crear'; 
+        case 3: 
+            return 'index.php?url=consulta/index';
+        default: 
+            return 'index.php?url=auth/index';
+    }
+}
+```
+
+---
+
+### redirigirSegunGrado()
+
+```php
+private function redirigirSegunGrado(int $grado): void
+```
+
+Performs HTTP redirect based on user's access level.
+
+**Parameters:**
+
+<ParamField query="grado" type="integer" required>
+  User's access level (1, 2, or 3)
+</ParamField>
+
+**Behavior:**
+- Calls `getRedirectUrl($grado)` to determine target URL
+- Sends `Location` header
+- Exits script execution
+
+**Source Code:**
+```php
+private function redirigirSegunGrado($grado) {
+    header('Location: ' . $this->getRedirectUrl($grado));
+    exit;
+}
+```
+
+---
+
+## Authentication Flow
+
+<Accordion title="Complete Authentication Sequence">
+
+1. **User visits site** → `index.php?url=auth/index`
+2. **AuthController::index()** checks for existing session
+3. If not logged in → displays login form
+4. **User submits credentials** → POST to `index.php?url=auth/login`
+5. **AuthController::login()** validates credentials with `AuthModel`
+6. On success:
+   - Session variables set
+   - Session ID regenerated
+   - JSON response with redirect URL
+7. **Frontend redirects** user to role-appropriate dashboard
+8. **User logs out** → `index.php?url=auth/logout`
+9. Session destroyed → redirected to login
+
+</Accordion>
+
+---
+
+## Security Considerations
+
+<Warning>
+**Critical Security Issues:**
+
+1. **Plain-text passwords** - Passwords are stored and compared in plain text
+2. **No rate limiting** - Brute force attacks are not mitigated
+3. **No CSRF protection** - Cross-site request forgery tokens not implemented
+4. **No password complexity** - No validation rules enforced
+
+**Recommended Improvements:**
+- Implement `password_hash()` and `password_verify()` for password storage
+- Add rate limiting for login attempts
+- Implement CSRF tokens for login form
+- Add session timeout checks using `last_activity`
+- Use HTTPS for all authentication endpoints
+</Warning>
+
+---
+
+## Usage Example
+
+### JavaScript Login Implementation
+
+```javascript
+// Login form submission
+const form = document.getElementById('loginForm');
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData(form);
+    
+    try {
+        const response = await fetch('index.php?url=auth/login', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            window.location.href = data.redirect;
+        } else {
+            alert(data.message);
+        }
+    } catch (error) {
+        console.error('Login error:', error);
+    }
+});
+```
+
+### PHP Session Check
+
+```php
+// Check if user is authenticated
+if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
+    header('Location: index.php?url=auth/index');
+    exit;
+}
+
+// Check user role
+if ($_SESSION['grado'] != 1) {
+    die('Access denied: Administrator privileges required');
+}
+```
+
+---
+
+## Related Components
+
+- [AdminController](/api/admin-controller) - Admin panel (requires grado 1)
+- [PanelController](/api/panel-controller) - Return registration (requires grado 1 or 2)
+- [ConsultaController](/api/consulta-controller) - History viewing (all authenticated users)

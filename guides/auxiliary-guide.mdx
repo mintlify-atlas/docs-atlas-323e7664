@@ -1,0 +1,506 @@
+---
+title: 'Auxiliary User Guide'
+description: 'Complete guide for auxiliary users to register product returns, shortages, and surpluses in DevolutionSync'
+icon: 'user-pen'
+---
+
+## Overview
+
+As an Auxiliary User (Grado 2), you are responsible for registering product returns, shortages (faltantes), and surpluses (sobrantes) in the DevolutionSync system. This guide provides step-by-step instructions for creating accurate return records.
+
+<Note>
+  **Access Requirements:** You must have Grado 2 (Auxiliary) or Grado 1 (Administrator) privileges to access the registration panel. Contact your system administrator if you need access.
+</Note>
+
+## Accessing the Registration Panel
+
+<Steps>
+  <Step title="Log in to DevolutionSync">
+    Navigate to the system login page and enter your credentials. Users with `grado = 2` (Auxiliary) or `grado = 1` (Admin) can access the registration panel.
+  </Step>
+  
+  <Step title="Open the auxiliary panel">
+    Navigate to `index.php?url=panel/auxiliar` or click on the "Registro de Devolución" link in the navigation menu.
+  </Step>
+  
+  <Step title="View the registration form">
+    The panel displays the registration form with three main sections:
+    - **Client Information**
+    - **Product Information**
+    - **Return Details**
+  </Step>
+</Steps>
+
+## Understanding the Registration Form
+
+The registration form is organized into logical sections to guide you through the process:
+
+### Form Sections
+
+1. **📦 Gestión de Devoluciones** (Header)
+   - Main title and description
+   - Success/error alert messages
+
+2. **👤 Información del Cliente** (Client Information)
+   - NIT, client name, and delivery address
+
+3. **📦 Información del Producto** (Product Information)
+   - Product selection from catalog
+   - Auto-populated product details
+
+4. **⚠️ Detalles de la Devolución** (Return Details)
+   - Return reason, quantities, observations, and evidence
+
+## Registering a New Return
+
+Follow this comprehensive workflow to register a product return:
+
+<Steps>
+  <Step title="Enter client information">
+    Complete the following fields in the **Información del Cliente** section:
+    
+    **NIT Cliente** (Required)
+    - Enter the client's tax identification number
+    - Format example: `900123456-7`
+    - This field is mandatory for tracking purposes
+    
+    **Nombre Cliente** (Required)
+    - Enter the complete legal name of the client
+    - Must match official company records
+    
+    **Dirección** (Required)
+    - Enter the complete delivery address
+    - Include street, city, and any relevant details
+  </Step>
+  
+  <Step title="Select the product">
+    In the **Información del Producto** section:
+    
+    **Producto** (Required)
+    - Click the dropdown menu to view all available products
+    - Products are loaded from the `productos` table via `ProductoModel::listarTodos()`
+    - Each option displays: `{item code} - {product description}`
+    
+    When you select a product, the form automatically populates:
+    - **Item Producto**: Product item code
+    - **Descripción**: Product description
+    - **Unidad**: Unit of measurement (UND, CAJA, etc.)
+    - **KG por Unidad**: Weight per unit in kilograms
+    
+    <Tip>
+      Product information is auto-filled using the `cargarInfoProducto()` JavaScript function, which reads data attributes from the selected option.
+    </Tip>
+  </Step>
+  
+  <Step title="Choose the return reason">
+    In the **Detalles de la Devolución** section, select the **Motivo** (reason):
+    
+    - **🔄 Devolución**: Product return (defective, incorrect, etc.)
+    - **❌ Faltante**: Shortage (missing items from delivery)
+    - **➕ Sobrante**: Surplus (extra items in delivery)
+    
+    <Note>
+      The return reason determines how the record is processed and tracked in inventory systems.
+    </Note>
+  </Step>
+  
+  <Step title="Enter quantities">
+    Specify the quantities involved in the return:
+    
+    **Cantidad (Unidades)** (Required)
+    - Enter the number of units
+    - Must be a positive integer (minimum 0)
+    - Example: `5` for 5 units
+    
+    **Cantidad (Kilogramos)** (Required)
+    - This field auto-calculates when you enter units
+    - Formula: `Units × KG per Unit = Total KG`
+    - You can manually override if needed
+    - Example: If 5 units × 2.5 kg/unit = 12.50 kg
+    
+    <Tip>
+      The `calcularKgTotal()` function automatically calculates total weight based on units. Use the `onchange` event on the units field to trigger recalculation.
+    </Tip>
+  </Step>
+  
+  <Step title="Add observations">
+    In the **Observaciones** field (required), provide detailed information:
+    
+    - Describe the reason for the return in detail
+    - Note the condition of the product
+    - Include relevant circumstances (delivery issues, client complaints, etc.)
+    - Reference any supporting documentation
+    
+    **Good Example:**
+    ```
+    Cliente reporta que 5 unidades del producto llegaron con empaques
+    dañados debido a manipulación inadecuada durante el transporte.
+    El contenido del producto permanece intacto. Se solicita reemplazo.
+    ```
+    
+    <Warning>
+      Observations are mandatory and should be clear and professional. They help administrators make informed approval decisions.
+    </Warning>
+  </Step>
+  
+  <Step title="Upload evidence (optional)">
+    Attach photographic evidence of the return:
+    
+    **Evidencia Fotográfica** (Optional)
+    - Click "Choose File" to select an image
+    - Supported formats: JPG, JPEG, PNG, GIF
+    - Maximum file size: 5 MB
+    - Images are uploaded to `uploads/evidencias/` directory
+    
+    The system validates:
+    - File size must not exceed 5 MB
+    - File extension must be jpg, jpeg, png, or gif
+    - Files are renamed with unique identifiers: `evidencia_{timestamp}_{uniqid}.{ext}`
+    
+    <Tip>
+      While evidence is optional, uploading clear photos greatly increases the likelihood of approval and speeds up the review process.
+    </Tip>
+  </Step>
+  
+  <Step title="Submit the registration">
+    Review all information for accuracy, then:
+    
+    - Click **"Registrar Devolución"** to submit the form
+    - A validation check ensures all required fields are complete
+    - If successful, you'll see: ✅ **"Devolución registrada correctamente. ID de registro generado."**
+    - The form submits to `index.php?url=panel/registrar` via POST
+    
+    Alternatively:
+    - Click **"Limpiar Formulario"** to reset all fields and start over
+  </Step>
+</Steps>
+
+## Form Validation Rules
+
+The system enforces strict validation to ensure data quality:
+
+### Required Fields (Server-Side)
+
+Validation occurs in `PanelController::validarCampos()` (lines 109-135):
+
+| Field | Validation Rule |
+|-------|----------------|
+| **nit** | Cannot be empty |
+| **nombre_cliente** | Cannot be empty |
+| **direccion** | Cannot be empty |
+| **producto** | Must select a valid product |
+| **motivo** | Must select a return reason |
+| **cantidad_und** | Must be > 0 |
+| **cantidad_kg** | Must be ≥ 0 |
+| **observacion** | Cannot be empty |
+
+### Client-Side Validation
+
+JavaScript validation occurs before form submission (lines 259-269):
+
+```javascript
+if (!producto || !motivo || !cantidad_und || cantidad_und <= 0) {
+    alert('⚠️ Por favor complete todos los campos obligatorios correctamente');
+    return false;
+}
+```
+
+### File Upload Validation
+
+Evidence file validation (see `PanelController::subirEvidencia()`, lines 140-172):
+
+- **Maximum size**: 5 MB (5,242,880 bytes)
+- **Allowed formats**: jpg, jpeg, png, gif
+- **Storage location**: `uploads/evidencias/`
+- **File naming**: `evidencia_{timestamp}_{uniqid}.{extension}`
+
+<Warning>
+  If validation fails, an error message is displayed:
+  
+  ❌ **Error:** "El campo '{field_name}' es obligatorio"
+  
+  Or for file uploads:
+  
+  ❌ **Error:** "El archivo excede el tamaño máximo de 5MB" or "Formato de archivo no permitido"
+</Warning>
+
+## Understanding the Data Flow
+
+When you submit the form, here's what happens behind the scenes:
+
+<Steps>
+  <Step title="Form submission">
+    The form sends a POST request to `PanelController::registrar()` with all field data and the uploaded file.
+  </Step>
+  
+  <Step title="Product lookup">
+    The controller retrieves complete product information:
+    ```php
+    $producto = $this->prodModel->obtenerPorItem($itemProducto);
+    ```
+  </Step>
+  
+  <Step title="Field validation">
+    All required fields are validated using `validarCampos()` method.
+  </Step>
+  
+  <Step title="Evidence upload">
+    If a file is uploaded, it's validated and moved to the evidencias directory.
+  </Step>
+  
+  <Step title="Data preparation">
+    A data array is prepared with all fields:
+    ```php
+    $datos = [
+        'nit' => $this->limpiar($_POST['nit']),
+        'nombre_cliente' => $this->limpiar($_POST['nombre_cliente']),
+        'direccion' => $this->limpiar($_POST['direccion']),
+        'item_producto' => $producto['item'],
+        'descripcion_producto' => $producto['descripcion'],
+        'unidad' => $producto['unidad'] ?? 'UND',
+        'kg' => $producto['kg'] ?? 0,
+        'motivo' => $this->limpiar($_POST['motivo']),
+        'cantidad_und' => floatval($_POST['cantidad_und']),
+        'cantidad_kg' => floatval($_POST['cantidad_kg']),
+        'observacion' => $this->limpiar($_POST['observacion']),
+        'usuario_creador' => $_SESSION['user'],
+        'evidencia' => $rutaEvidencia
+    ];
+    ```
+  </Step>
+  
+  <Step title="Database insertion">
+    The data is saved to the `devoluciones` table with estado = "Pendiente":
+    ```php
+    $this->devModel->guardar($datos);
+    ```
+  </Step>
+  
+  <Step title="Success response">
+    A success message is stored in the session and displayed after redirect:
+    ```php
+    $_SESSION['alerta'] = [
+        'tipo' => 'success',
+        'msg' => '✅ Devolución registrada correctamente. ID de registro generado.'
+    ];
+    ```
+  </Step>
+</Steps>
+
+## Success and Error Messages
+
+### Success Message
+
+When your return is successfully registered:
+
+```
+✅ Éxito: Devolución registrada correctamente. ID de registro generado.
+```
+
+- The record is created with a unique ID
+- Status is set to "Pendiente" (Pending)
+- Your username is recorded as `usuario_creador`
+- Timestamp is recorded as `fecha_creacion`
+- The return enters the administrator review queue
+
+### Error Messages
+
+Common error messages and their meanings:
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| ❌ "Debe seleccionar un producto" | No product selected | Choose a product from the dropdown |
+| ❌ "Producto no encontrado" | Invalid product code | Contact technical support |
+| ❌ "El campo '{field}' es obligatorio" | Required field empty | Complete all mandatory fields |
+| ❌ "La cantidad en unidades debe ser mayor a 0" | Zero or negative units | Enter a positive quantity |
+| ❌ "El archivo excede el tamaño máximo de 5MB" | File too large | Compress or resize the image |
+| ❌ "Formato de archivo no permitido" | Wrong file type | Use JPG, PNG, or GIF format |
+| ❌ "Error al subir el archivo de evidencia" | Upload failed | Check file permissions or try again |
+| ❌ "Error al guardar en la base de datos" | Database error | Contact technical support |
+
+<Note>
+  Error details are logged on the server for troubleshooting. Contact your system administrator if you encounter persistent errors.
+</Note>
+
+## Best Practices
+
+<Accordion title="Accurate Data Entry">
+  - Double-check NIT and client name for accuracy
+  - Verify product selection matches the physical item
+  - Ensure quantities reflect actual discrepancies
+  - Use precise measurements for weight calculations
+</Accordion>
+
+<Accordion title="Detailed Observations">
+  - Write clear, factual descriptions
+  - Include relevant context (delivery issues, packaging damage, etc.)
+  - Note the condition of products clearly
+  - Reference any client communications
+  - Mention any immediate actions taken
+</Accordion>
+
+<Accordion title="Quality Evidence">
+  - Take clear, well-lit photos
+  - Capture multiple angles if relevant
+  - Show product codes or labels clearly
+  - Include damage or defects prominently
+  - Keep file sizes under 5 MB (compress if needed)
+</Accordion>
+
+<Accordion title="Timely Registration">
+  - Register returns as soon as identified
+  - Don't batch multiple days of returns
+  - Create separate records for each unique issue
+  - Complete forms during business hours when possible
+</Accordion>
+
+<Accordion title="Security and Privacy">
+  - Never share your login credentials
+  - Log out when leaving your workstation
+  - Verify client information confidentiality
+  - Don't modify or delete submitted returns
+</Accordion>
+
+## Form Features and Functionality
+
+### Auto-Calculation of Weights
+
+The form includes JavaScript automation to simplify data entry:
+
+```javascript
+function calcularKgTotal() {
+    const cantidad_und = parseFloat(document.getElementById('cantidad_und').value) || 0;
+    const kg_unitario = parseFloat(document.getElementById('kg').value) || 0;
+    const total_kg = cantidad_und * kg_unitario;
+    document.getElementById('cantidad_kg').value = total_kg.toFixed(2);
+}
+```
+
+**How it works:**
+1. Enter the number of units in "Cantidad (Unidades)"
+2. The `onchange` event triggers `calcularKgTotal()`
+3. Total weight is calculated: Units × KG per Unit
+4. The "Cantidad (Kilogramos)" field updates automatically
+
+### Dynamic Product Information
+
+Product details are dynamically loaded when you select a product:
+
+```javascript
+function cargarInfoProducto() {
+    const select = document.getElementById('producto');
+    const option = select.options[select.selectedIndex];
+    
+    if (option.value) {
+        document.getElementById('item_producto').value = option.value;
+        document.getElementById('descripcion_producto').value = option.dataset.descripcion || '';
+        document.getElementById('unidad').value = option.dataset.unidad || 'UND';
+        document.getElementById('kg').value = option.dataset.kg || '0';
+    }
+}
+```
+
+**Data attributes used:**
+- `data-descripcion`: Product description
+- `data-unidad`: Unit of measurement
+- `data-kg`: Weight per unit in kilograms
+
+### Form Reset
+
+The "Limpiar Formulario" button resets all fields to their default state, allowing you to start a new entry without refreshing the page.
+
+## Security and Access Control
+
+The auxiliary panel implements security measures:
+
+### Session Validation
+
+```php
+// PanelController.php:10-27
+if (!isset($_SESSION['logged_in'])) {
+    header('Location: index.php?url=auth/index');
+    exit;
+}
+
+if (!isset($_SESSION['grado']) || ($_SESSION['grado'] != 1 && $_SESSION['grado'] != 2)) {
+    header('Location: index.php?url=home/index');
+    exit;
+}
+```
+
+- Users must be logged in
+- User grade must be 1 (Admin) or 2 (Auxiliary)
+- Unauthorized access redirects appropriately
+
+### Data Sanitization
+
+All text inputs are sanitized to prevent XSS attacks:
+
+```php
+private function limpiar($texto) {
+    return htmlspecialchars(trim($texto), ENT_QUOTES, 'UTF-8');
+}
+```
+
+### Audit Trail
+
+Every return registration records:
+- `usuario_creador`: Your username from session
+- `fecha_creacion`: Timestamp of registration (NOW())
+- `estado`: Set to "Pendiente" by default
+
+<Warning>
+  You are personally accountable for all returns registered under your account. Ensure accuracy and honesty in all submissions.
+</Warning>
+
+## Troubleshooting
+
+### Form Won't Submit
+
+- **Cause**: Missing required fields or validation failure
+- **Solution**: Check for red asterisks (*) marking required fields. Ensure all are completed.
+
+### Product Dropdown is Empty
+
+- **Cause**: No products in database or connection error
+- **Solution**: Contact system administrator to verify product catalog is populated
+
+### File Upload Fails
+
+- **Cause**: File too large, wrong format, or permission issues
+- **Solution**: 
+  - Compress image to under 5 MB
+  - Convert to JPG, PNG, or GIF
+  - Contact technical support if issue persists
+
+### Auto-Calculation Not Working
+
+- **Cause**: JavaScript disabled or browser compatibility
+- **Solution**: Enable JavaScript in browser settings, or manually calculate and enter the total KG
+
+### Can't Access Auxiliary Panel
+
+- **Cause**: Insufficient privileges (grado ≠ 1 or 2)
+- **Solution**: Contact system administrator to verify your account has Auxiliary (Grado 2) or Administrator (Grado 1) access
+
+## After Registration
+
+Once you successfully register a return:
+
+1. **Status**: The return is created with estado = "Pendiente"
+2. **Queue**: It enters the administrator review queue
+3. **Notification**: Administrators see it in their pending returns table
+4. **Tracking**: The unique ID allows tracking throughout the approval process
+5. **Review**: An administrator will review and approve/reject the return
+6. **Updates**: You may receive notifications about the review decision
+
+<Tip>
+  Keep the return ID for reference. You can view the status of your submitted returns in the consultation panel (if you have access).
+</Tip>
+
+## Related Resources
+
+- [Administrator Guide](/guides/admin-guide) - Learn how returns are reviewed
+- [Consultation Guide](/guides/consultation-guide) - View return history and status
+- [API Reference](/api/panel-controller) - Technical controller documentation
+- [Database Schema](/technical/database-schema) - Return data structure

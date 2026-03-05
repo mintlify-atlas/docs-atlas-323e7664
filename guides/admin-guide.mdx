@@ -1,0 +1,310 @@
+---
+title: 'Administrator User Guide'
+description: 'Complete guide for administrators to review and manage product returns in DevolutionSync'
+icon: 'user-shield'
+---
+
+## Overview
+
+As an Administrator (Grado 1), you have full access to review, approve, or reject product returns submitted by auxiliary users. This guide walks you through the complete workflow for managing returns in the DevolutionSync system.
+
+<Note>
+  **Access Requirements:** You must have Grado 1 (Administrator) privileges to access the admin panel. Contact your system administrator if you need elevated permissions.
+</Note>
+
+## Accessing the Admin Panel
+
+<Steps>
+  <Step title="Log in to DevolutionSync">
+    Navigate to the system login page and enter your credentials. Only users with `grado = 1` can access the administrator panel.
+  </Step>
+  
+  <Step title="Access the admin panel">
+    After successful login, navigate to `index.php?url=admin/index` or click on the Admin Panel link in the navigation menu.
+  </Step>
+  
+  <Step title="View the dashboard">
+    The admin panel displays two main sections:
+    - **Pending Returns**: Queue of returns awaiting your review
+    - **Recent History**: Last 50 reviewed returns with their status
+  </Step>
+</Steps>
+
+## Understanding the Admin Dashboard
+
+The administrator panel provides a comprehensive overview of the return management queue:
+
+### Dashboard Statistics
+
+At the top of the panel, you'll see key metrics:
+
+- **Pendientes**: Total number of returns awaiting review
+- **Recientes**: Number of recently processed returns (last 50)
+
+### Pending Returns Table
+
+The pending returns table displays the following information:
+
+| Column | Description |
+|--------|-------------|
+| **ID** | Unique identifier for the return record |
+| **Cliente** | Client name and NIT (tax identification) |
+| **Producto** | Product item code and description |
+| **Motivo** | Return reason (🔄 Devolución, ❌ Faltante, ➕ Sobrante) |
+| **Cantidad** | Quantity in units (UND) and kilograms (KG) |
+| **Fecha** | Creation date and time |
+| **Creado por** | Username of the auxiliary user who created the return |
+| **Acciones** | Review button to process the return |
+
+<Tip>
+  Returns are displayed in chronological order (oldest first) to ensure fair processing based on submission time.
+</Tip>
+
+## Reviewing Returns
+
+Follow this workflow to review and process pending returns:
+
+<Steps>
+  <Step title="Open the return details">
+    In the pending returns table, click the **"Revisar"** button for the return you want to process. This opens a modal window with detailed information.
+  </Step>
+  
+  <Step title="Review the return information">
+    The modal displays complete details including:
+    - Client information (NIT, name, address)
+    - Product details (item code, description, unit, weight)
+    - Return type and quantities
+    - Observations from the auxiliary user
+    - Evidence photos (if uploaded)
+    
+    The system fetches this data via AJAX from `index.php?url=consulta/detalles&id={id}`.
+  </Step>
+  
+  <Step title="Make your decision">
+    In the revision form within the modal, complete the following required fields:
+    
+    **Decision**: Select one of the following actions:
+    - ✅ **APROBAR Devolución**: Approve the return
+    - ❌ **RECHAZAR Devolución**: Reject the return
+  </Step>
+  
+  <Step title="Enter authorization code">
+    Provide the **Código de Autorización** (authorization code) - this is a mandatory field that tracks approval authority.
+    
+    <Warning>
+      The authorization code is required for both approvals and rejections. This creates an audit trail for all administrative decisions.
+    </Warning>
+  </Step>
+  
+  <Step title="Add administrator observations">
+    Enter your observations in the **Observaciones del Administrador** field. This should explain:
+    - The reason for your decision
+    - Any additional notes about the product condition
+    - Instructions for follow-up actions
+    - Reference to policies or guidelines applied
+  </Step>
+  
+  <Step title="Submit the review">
+    Click **"Enviar Revisión"** to process the return. A confirmation dialog will ask you to confirm your decision.
+    
+    <Note>
+      **This action is irreversible** - once submitted, the decision is permanently recorded in the system with your username and timestamp.
+    </Note>
+  </Step>
+</Steps>
+
+## Form Validation and Requirements
+
+The review form enforces the following validation rules (see `AdminController.php:42-94`):
+
+### Required Fields
+
+1. **ID Devolución**: Automatically populated (must be valid integer > 0)
+2. **Acción**: Must be either "aprobado" or "rechazado"
+3. **Código de Autorización**: Cannot be empty
+4. **Observaciones**: Cannot be empty
+
+### Validation Process
+
+```php
+// Validation occurs in AdminController::revisar()
+if ($id <= 0) {
+    throw new Exception('ID de devolución inválido');
+}
+
+if (!in_array($accion, ['aprobado', 'rechazado'])) {
+    throw new Exception('Acción inválida');
+}
+
+if (empty($codigo) || empty($obs)) {
+    throw new Exception('Required fields missing');
+}
+```
+
+<Warning>
+  If validation fails, the system redirects to `index.php?url=admin/index&msg=error` and displays an error message. Always ensure all required fields are completed.
+</Warning>
+
+## Understanding Return Status Updates
+
+When you process a return, the system updates the database with the following information:
+
+### Database Fields Updated
+
+- **estado**: Changed from "Pendiente" to "aprobado" or "rechazado"
+- **codigo_admin**: Your authorization code
+- **observacion_admin**: Your observations
+- **usuario_revisor**: Your username (from `$_SESSION['user']`)
+- **fecha_revision**: Current timestamp (NOW())
+
+### Notification System
+
+The system attempts to create notifications for auxiliary users (see `AdminController.php:100-129`):
+
+- **Approved**: "Tu devolución #{id} ha sido APROBADA ✅. Observación: {your_notes}"
+- **Rejected**: "Tu devolución #{id} ha sido RECHAZADA ❌. Observación: {your_notes}"
+
+<Tip>
+  Notifications are optional and won't prevent successful processing if the NotificacionModel doesn't exist.
+</Tip>
+
+## Viewing Return History
+
+The **Historial Reciente** section shows the last 50 processed returns:
+
+<Steps>
+  <Step title="Review historical data">
+    The history table displays:
+    - Return ID and status badge (✅ Aprobado, ❌ Rechazado)
+    - Client name
+    - Product information
+    - Review date and time
+    - Reviewer username
+  </Step>
+  
+  <Step title="View details (read-only)">
+    Click the **"Ver"** button to view complete details of any historical return. This opens a read-only modal with all information.
+  </Step>
+  
+  <Step title="Export history (optional)">
+    Use the **"Exportar"** button to export historical data (feature in development).
+  </Step>
+</Steps>
+
+## Best Practices for Return Review
+
+<Accordion title="Documentation Standards">
+  - Write clear, detailed observations explaining your decision
+  - Reference specific product conditions or policy violations
+  - Include authorization code that matches your organization's tracking system
+  - Be specific about quantities and discrepancies
+</Accordion>
+
+<Accordion title="Review Priorities">
+  - Process returns in chronological order (oldest first)
+  - Prioritize high-value returns or urgent situations
+  - Review evidence photos carefully before making decisions
+  - Verify client information matches company records
+</Accordion>
+
+<Accordion title="Quality Assurance">
+  - Double-check product codes and descriptions
+  - Validate quantities against auxiliary user observations
+  - Ensure evidence photos support the return claim
+  - Cross-reference with inventory or delivery records when possible
+</Accordion>
+
+<Accordion title="Communication">
+  - Use clear, professional language in observations
+  - Provide actionable feedback for rejected returns
+  - Include next steps or instructions for auxiliary users
+  - Document any follow-up actions required
+</Accordion>
+
+## Success and Error Messages
+
+After processing a return, you'll see one of the following alerts:
+
+### Success Message
+
+```
+✅ Éxito: Revisión procesada correctamente
+```
+
+This appears when the return is successfully updated in the database.
+
+### Error Message
+
+```
+❌ Error: Error al procesar la revisión
+```
+
+This indicates validation failure or database error. Common causes:
+- Missing required fields
+- Invalid return ID
+- Database connection issues
+- Invalid action value
+
+<Note>
+  Error details are logged to the server error log via `error_log()` for troubleshooting by technical staff.
+</Note>
+
+## Security and Access Control
+
+The administrator panel includes security measures:
+
+### Session Validation
+
+```php
+// AdminController.php:11-17
+if (!isset($_SESSION['logged_in']) || $_SESSION['grado'] != 1) {
+    header('Location: index.php?url=auth/index');
+    exit;
+}
+```
+
+- Users must be logged in (`$_SESSION['logged_in']`)
+- User grade must be exactly 1 (Administrator)
+- Unauthorized access redirects to login page
+
+### Audit Trail
+
+Every review action is tracked with:
+- Administrator username
+- Authorization code
+- Timestamp of review
+- Decision (approved/rejected)
+- Detailed observations
+
+<Warning>
+  Never share your login credentials or authorization codes. Each administrator is personally accountable for all reviews performed under their account.
+</Warning>
+
+## Troubleshooting
+
+### Can't See Pending Returns
+
+- **Cause**: All returns have been processed
+- **Solution**: Check the "Historial Reciente" section for processed returns
+
+### Modal Won't Load Details
+
+- **Cause**: Network error or invalid return ID
+- **Solution**: Refresh the page and try again. Check browser console for errors.
+
+### Submission Fails with Error
+
+- **Cause**: Missing required fields or validation failure
+- **Solution**: Ensure all required fields (action, authorization code, observations) are completed
+
+### Can't Access Admin Panel
+
+- **Cause**: Insufficient privileges (grado ≠ 1)
+- **Solution**: Contact system administrator to verify your user account has Administrator (Grado 1) access
+
+## Related Resources
+
+- [Auxiliary User Guide](/guides/auxiliary-guide) - Learn how returns are created
+- [Consultation Guide](/guides/consultation-guide) - View return history and reporting
+- [API Reference](/api/admin-controller) - Technical controller documentation
+- [Database Schema](/technical/database-schema) - Return data structure

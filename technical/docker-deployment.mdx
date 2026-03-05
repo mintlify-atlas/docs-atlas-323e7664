@@ -1,0 +1,844 @@
+---
+title: 'Docker Deployment'
+description: 'Complete guide to deploying DevolutionSync using Docker and Docker Compose'
+icon: 'docker'
+---
+
+## Overview
+
+DevolutionSync includes production-ready Docker configuration for containerized deployment. This approach ensures consistent environments across development, staging, and production systems.
+
+## Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Docker Engine" icon="docker">
+    Version 20.10 or higher
+  </Card>
+  <Card title="Docker Compose" icon="layer-group">
+    Version 2.0 or higher
+  </Card>
+  <Card title="MySQL Server" icon="database">
+    Version 8.0 (external or containerized)
+  </Card>
+  <Card title="Network Access" icon="network-wired">
+    Port 8097 available for web access
+  </Card>
+</CardGroup>
+
+### Installation
+
+<Tabs>
+  <Tab title="Linux">
+    ```bash
+    # Install Docker
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    
+    # Install Docker Compose
+    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
+    
+    # Verify installation
+    docker --version
+    docker-compose --version
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    # Install Docker Desktop for Mac
+    # Download from: https://www.docker.com/products/docker-desktop
+    
+    # Verify installation
+    docker --version
+    docker-compose --version
+    ```
+  </Tab>
+  
+  <Tab title="Windows">
+    ```powershell
+    # Install Docker Desktop for Windows
+    # Download from: https://www.docker.com/products/docker-desktop
+    
+    # Verify installation in PowerShell
+    docker --version
+    docker-compose --version
+    ```
+  </Tab>
+</Tabs>
+
+## Dockerfile Breakdown
+
+The `Dockerfile` defines the container image for DevolutionSync:
+
+```dockerfile Dockerfile
+# Use official PHP with Apache base image
+FROM php:8.2-apache
+
+# Enable necessary PHP extensions
+RUN docker-php-ext-install pdo pdo_mysql mysqli
+
+# Copy all project files to container
+COPY . /var/www/html/
+
+# Adjust permissions for Apache
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 755 /var/www/html
+
+# Expose Apache port
+EXPOSE 80
+```
+
+### Dockerfile Components
+
+<AccordionGroup>
+  <Accordion title="Base Image: php:8.2-apache">
+    ```dockerfile
+    FROM php:8.2-apache
+    ```
+    
+    **Official PHP image with:**
+    - PHP 8.2 runtime
+    - Apache 2.4 web server
+    - Debian-based Linux
+    - Pre-configured for web applications
+    
+    <Note>
+    This base image includes mod_rewrite and other essential Apache modules.
+    </Note>
+  </Accordion>
+  
+  <Accordion title="PHP Extensions">
+    ```dockerfile
+    RUN docker-php-ext-install pdo pdo_mysql mysqli
+    ```
+    
+    **Installed extensions:**
+    
+    | Extension | Purpose |
+    |-----------|----------|
+    | `pdo` | PHP Data Objects - database abstraction layer |
+    | `pdo_mysql` | MySQL driver for PDO |
+    | `mysqli` | MySQL Improved extension (legacy support) |
+    
+    These extensions enable database connectivity for DevolutionSync.
+  </Accordion>
+  
+  <Accordion title="Application Files">
+    ```dockerfile
+    COPY . /var/www/html/
+    ```
+    
+    Copies entire project directory into container:
+    - PHP source code
+    - Controllers, Models, Views
+    - Configuration files
+    - Static assets (CSS, JS, images)
+    - Upload directories
+  </Accordion>
+  
+  <Accordion title="File Permissions">
+    ```dockerfile
+    RUN chown -R www-data:www-data /var/www/html \
+        && chmod -R 755 /var/www/html
+    ```
+    
+    **Security configuration:**
+    - Owner: `www-data` (Apache user)
+    - Group: `www-data`
+    - Permissions: `755` (rwxr-xr-x)
+      - Owner: Read, Write, Execute
+      - Group: Read, Execute
+      - Others: Read, Execute
+    
+    <Warning>
+    Upload directories may need `775` or `777` permissions for write access.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Port Exposure">
+    ```dockerfile
+    EXPOSE 80
+    ```
+    
+    Documents that the container listens on port 80 (HTTP). This is Apache's default port inside the container.
+  </Accordion>
+</AccordionGroup>
+
+## Docker Compose Configuration
+
+The `Docker-compose.yml` orchestrates the application container and its dependencies:
+
+```yaml Docker-compose.yml
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: Proyecto_UCP
+    ports:
+      - "8097:80"
+    volumes:
+      - ./:/var/www/html
+    # depends_on:
+    #   - db
+    networks:
+      - red_local
+
+volumes:
+  db_data:
+
+networks:
+  red_local:
+```
+
+### Configuration Breakdown
+
+<Tabs>
+  <Tab title="Web Service">
+    ```yaml
+    web:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      container_name: Proyecto_UCP
+      ports:
+        - "8097:80"
+      volumes:
+        - ./:/var/www/html
+      networks:
+        - red_local
+    ```
+    
+    **Service configuration:**
+    
+    | Setting | Value | Description |
+    |---------|-------|-------------|
+    | `build.context` | `.` | Build from current directory |
+    | `build.dockerfile` | `Dockerfile` | Use specified Dockerfile |
+    | `container_name` | `Proyecto_UCP` | Container name for easy reference |
+    | `ports` | `8097:80` | Map host:container ports |
+    | `volumes` | `./:/var/www/html` | Mount project directory |
+    | `networks` | `red_local` | Connect to custom network |
+  </Tab>
+  
+  <Tab title="Port Mapping">
+    ```yaml
+    ports:
+      - "8097:80"
+    ```
+    
+    **Port mapping explained:**
+    
+    ```
+    Host Machine          Docker Container
+    ┌──────────────┐      ┌──────────────┐
+    │              │      │              │
+    │  Port 8097   │─────>│   Port 80    │
+    │              │      │  (Apache)    │
+    └──────────────┘      └──────────────┘
+    ```
+    
+    - **Host Port**: 8097 (external access)
+    - **Container Port**: 80 (Apache inside container)
+    - **Access URL**: `http://localhost:8097`
+    
+    <Note>
+    You can change the host port (8097) to any available port without modifying the Dockerfile.
+    </Note>
+  </Tab>
+  
+  <Tab title="Volume Mounts">
+    ```yaml
+    volumes:
+      - ./:/var/www/html
+    ```
+    
+    **Bind mount configuration:**
+    
+    - **Source**: `./` (current directory on host)
+    - **Target**: `/var/www/html` (Apache document root)
+    - **Purpose**: Live code updates without rebuilding
+    
+    **Benefits:**
+    - Edit code on host machine
+    - Changes immediately reflected in container
+    - No rebuild required for code changes
+    - Persistent data (uploads, logs)
+    
+    <Warning>
+    Volume mounts can affect performance on Windows/Mac. Consider using named volumes for production.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Networks">
+    ```yaml
+    networks:
+      - red_local
+      
+    # Network definition
+    networks:
+      red_local:
+    ```
+    
+    **Custom network benefits:**
+    
+    - Container isolation
+    - Service discovery by name
+    - Communication between containers
+    - Network-level security
+    
+    **Example usage:**
+    ```yaml
+    # If you add a database container:
+    services:
+      web:
+        networks:
+          - red_local
+      db:
+        image: mysql:8.0
+        networks:
+          - red_local
+    ```
+    
+    Containers on `red_local` can communicate using service names (e.g., `web`, `db`).
+  </Tab>
+</Tabs>
+
+### Database Configuration (Commented)
+
+The current configuration uses an external MySQL database:
+
+```yaml
+# depends_on:
+#   - db
+```
+
+<Accordion title="Adding MySQL Container (Optional)">
+To run MySQL in Docker, uncomment and add:
+
+```yaml Docker-compose.yml
+services:
+  web:
+    # ... existing configuration ...
+    depends_on:
+      - db
+    environment:
+      - DB_HOST=db
+      - DB_NAME=devolutionsync
+      - DB_USER=sanmarino
+      - DB_PASS=sanmarino2021*
+  
+  db:
+    image: mysql:8.0
+    container_name: mysql_devolution
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: devolutionsync
+      MYSQL_USER: sanmarino
+      MYSQL_PASSWORD: sanmarino2021*
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./Script_BD/Script_DB.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - red_local
+
+volumes:
+  db_data:
+```
+
+**Update `config/conexion.php`:**
+```php
+$host = 'db';  // Service name instead of IP
+```
+</Accordion>
+
+## Deployment Steps
+
+### Quick Start
+
+<Steps>
+  <Step title="Clone Repository">
+    ```bash
+    git clone https://github.com/your-org/devolutionsync.git
+    cd devolutionsync
+    ```
+  </Step>
+  
+  <Step title="Configure Database">
+    Edit `config/conexion.php` with your database credentials:
+    
+    ```php config/conexion.php
+    $host = '192.200.100.40';  // Your MySQL server
+    $db   = 'devolutionsync';
+    $user = 'SANMARINO';
+    $pass = 'sanmarino2021*';
+    ```
+  </Step>
+  
+  <Step title="Build Docker Image">
+    ```bash
+    docker-compose build
+    ```
+    
+    This creates the container image with all dependencies.
+  </Step>
+  
+  <Step title="Start Container">
+    ```bash
+    docker-compose up -d
+    ```
+    
+    The `-d` flag runs containers in detached mode (background).
+  </Step>
+  
+  <Step title="Verify Deployment">
+    ```bash
+    # Check container status
+    docker-compose ps
+    
+    # View logs
+    docker-compose logs -f web
+    ```
+    
+    Access application: `http://localhost:8097`
+  </Step>
+</Steps>
+
+### Detailed Deployment
+
+<CodeGroup>
+```bash Build Image
+# Build without cache (force rebuild)
+docker-compose build --no-cache
+
+# Build with progress output
+docker-compose build --progress=plain
+```
+
+```bash Start Services
+# Start in foreground (see logs)
+docker-compose up
+
+# Start in background
+docker-compose up -d
+
+# Start specific service
+docker-compose up -d web
+```
+
+```bash Stop Services
+# Stop containers (keep data)
+docker-compose stop
+
+# Stop and remove containers
+docker-compose down
+
+# Stop and remove volumes (CAUTION: deletes data)
+docker-compose down -v
+```
+
+```bash View Logs
+# All services
+docker-compose logs
+
+# Specific service with follow
+docker-compose logs -f web
+
+# Last 100 lines
+docker-compose logs --tail=100 web
+```
+</CodeGroup>
+
+## Environment Variables
+
+For production, use environment variables instead of hardcoded credentials:
+
+### Create .env File
+
+```bash .env
+# Database Configuration
+DB_HOST=192.200.100.40
+DB_NAME=devolutionsync
+DB_USER=SANMARINO
+DB_PASS=sanmarino2021*
+DB_CHARSET=utf8
+
+# Application Configuration
+APP_ENV=production
+APP_DEBUG=false
+APP_URL=http://localhost:8097
+
+# Session Configuration
+SESSION_LIFETIME=3600
+SESSION_COOKIE_NAME=devolution_session
+```
+
+### Update docker-compose.yml
+
+```yaml Docker-compose.yml
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: Proyecto_UCP
+    ports:
+      - "8097:80"
+    volumes:
+      - ./:/var/www/html
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - APP_ENV=${APP_ENV}
+    env_file:
+      - .env
+    networks:
+      - red_local
+```
+
+### Update config/conexion.php
+
+```php config/conexion.php
+<?php
+class Conexion {
+    public static function Conectar() {
+        // Read from environment variables
+        $host = getenv('DB_HOST') ?: '192.200.100.40';
+        $db   = getenv('DB_NAME') ?: 'devolutionsync';
+        $user = getenv('DB_USER') ?: 'SANMARINO';
+        $pass = getenv('DB_PASS') ?: 'sanmarino2021*';
+        $charset = getenv('DB_CHARSET') ?: 'utf8';
+
+        $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+        
+        // ... rest of configuration ...
+    }
+}
+```
+
+<Warning>
+Add `.env` to `.gitignore` to prevent committing secrets:
+
+```bash .gitignore
+.env
+.env.*
+!.env.example
+```
+</Warning>
+
+## Container Management
+
+### Common Commands
+
+<AccordionGroup>
+  <Accordion title="Execute Commands in Container">
+    ```bash
+    # Open bash shell
+    docker-compose exec web bash
+    
+    # Run PHP command
+    docker-compose exec web php -v
+    
+    # Check Apache configuration
+    docker-compose exec web apache2ctl -t
+    
+    # View PHP configuration
+    docker-compose exec web php -i
+    ```
+  </Accordion>
+  
+  <Accordion title="File Operations">
+    ```bash
+    # Copy file from container
+    docker cp Proyecto_UCP:/var/www/html/logs/error.log ./error.log
+    
+    # Copy file to container
+    docker cp ./config.php Proyecto_UCP:/var/www/html/config/
+    
+    # View file in container
+    docker-compose exec web cat /var/www/html/index.php
+    ```
+  </Accordion>
+  
+  <Accordion title="Debugging">
+    ```bash
+    # View container processes
+    docker-compose top
+    
+    # Check resource usage
+    docker stats Proyecto_UCP
+    
+    # Inspect container
+    docker inspect Proyecto_UCP
+    
+    # View Apache error log
+    docker-compose exec web tail -f /var/log/apache2/error.log
+    
+    # View PHP error log
+    docker-compose exec web tail -f /var/log/apache2/php_errors.log
+    ```
+  </Accordion>
+  
+  <Accordion title="Restart Services">
+    ```bash
+    # Restart all services
+    docker-compose restart
+    
+    # Restart specific service
+    docker-compose restart web
+    
+    # Rebuild and restart
+    docker-compose up -d --build
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Production Optimization
+
+### Dockerfile for Production
+
+```dockerfile Dockerfile.prod
+FROM php:8.2-apache
+
+# Install production dependencies
+RUN apt-get update && apt-get install -y \
+    libzip-dev \
+    zip \
+    unzip \
+    && docker-php-ext-install pdo pdo_mysql mysqli zip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Enable Apache modules
+RUN a2enmod rewrite headers expires
+
+# Copy application files
+COPY . /var/www/html/
+
+# Set production PHP settings
+RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+
+# Configure PHP
+RUN echo "upload_max_filesize = 10M" >> $PHP_INI_DIR/php.ini \
+    && echo "post_max_size = 10M" >> $PHP_INI_DIR/php.ini \
+    && echo "memory_limit = 256M" >> $PHP_INI_DIR/php.ini \
+    && echo "display_errors = Off" >> $PHP_INI_DIR/php.ini \
+    && echo "log_errors = On" >> $PHP_INI_DIR/php.ini
+
+# Set permissions
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 755 /var/www/html \
+    && chmod -R 775 /var/www/html/uploads
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost/ || exit 1
+
+EXPOSE 80
+```
+
+### Production docker-compose.yml
+
+```yaml docker-compose.prod.yml
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: devolution_prod
+    restart: always
+    ports:
+      - "80:80"
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - APP_ENV=production
+    env_file:
+      - .env.production
+    volumes:
+      - ./uploads:/var/www/html/uploads
+      - ./logs:/var/www/html/logs
+    networks:
+      - red_local
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  red_local:
+    driver: bridge
+```
+
+### Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Non-Root User" icon="user-shield">
+    ```dockerfile
+    RUN useradd -m -s /bin/bash appuser
+    USER appuser
+    ```
+  </Card>
+  
+  <Card title="Scan for Vulnerabilities" icon="shield-virus">
+    ```bash
+    docker scan devolutionsync:latest
+    ```
+  </Card>
+  
+  <Card title="Use Secrets" icon="key">
+    ```yaml
+    secrets:
+      db_password:
+        file: ./secrets/db_password.txt
+    ```
+  </Card>
+  
+  <Card title="Limit Resources" icon="memory">
+    ```yaml
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+    ```
+  </Card>
+</CardGroup>
+
+## Monitoring and Logging
+
+### Log Configuration
+
+```yaml docker-compose.yml
+services:
+  web:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+### Health Checks
+
+```yaml docker-compose.yml
+services:
+  web:
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port Already in Use">
+    **Error**: `Bind for 0.0.0.0:8097 failed: port is already allocated`
+    
+    **Solution**:
+    ```bash
+    # Find process using port
+    sudo lsof -i :8097
+    
+    # Kill process
+    sudo kill -9 <PID>
+    
+    # Or change port in docker-compose.yml
+    ports:
+      - "8098:80"  # Use different port
+    ```
+  </Accordion>
+  
+  <Accordion title="Database Connection Failed">
+    **Error**: `Connection refused` or `Access denied`
+    
+    **Solution**:
+    ```bash
+    # Check database is accessible from container
+    docker-compose exec web ping 192.200.100.40
+    
+    # Test MySQL connection
+    docker-compose exec web php -r "new PDO('mysql:host=192.200.100.40;dbname=devolutionsync', 'SANMARINO', 'sanmarino2021*');"
+    
+    # Verify credentials in config/conexion.php
+    ```
+  </Accordion>
+  
+  <Accordion title="Permission Denied Errors">
+    **Error**: `Permission denied` when uploading files
+    
+    **Solution**:
+    ```bash
+    # Fix permissions from inside container
+    docker-compose exec web chown -R www-data:www-data /var/www/html/uploads
+    docker-compose exec web chmod -R 775 /var/www/html/uploads
+    ```
+  </Accordion>
+  
+  <Accordion title="Container Keeps Restarting">
+    **Solution**:
+    ```bash
+    # View logs to identify error
+    docker-compose logs web
+    
+    # Check container exit code
+    docker inspect Proyecto_UCP --format='{{.State.ExitCode}}'
+    
+    # Start in foreground to see errors
+    docker-compose up web
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Backup and Recovery
+
+### Backup Container Data
+
+```bash
+# Backup uploads directory
+tar -czf uploads-backup-$(date +%Y%m%d).tar.gz ./uploads
+
+# Backup database (if using Docker MySQL)
+docker-compose exec db mysqldump -u root -p devolutionsync > backup-$(date +%Y%m%d).sql
+
+# Backup entire container
+docker commit Proyecto_UCP devolution_backup:$(date +%Y%m%d)
+```
+
+### Restore from Backup
+
+```bash
+# Restore uploads
+tar -xzf uploads-backup-20240315.tar.gz
+
+# Restore database
+docker-compose exec -T db mysql -u root -p devolutionsync < backup-20240315.sql
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="diagram-project" href="/technical/architecture">
+    Understand system architecture
+  </Card>
+  <Card title="Database Schema" icon="database" href="/technical/database-schema">
+    Learn database structure
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/environment">
+    Configure environment settings
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Set up monitoring and alerts
+  </Card>
+</CardGroup>

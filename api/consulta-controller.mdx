@@ -1,0 +1,561 @@
+---
+title: 'ConsultaController'
+description: 'Return history consultation controller for viewing and retrieving return records'
+icon: 'magnifying-glass'
+---
+
+## Overview
+
+The `ConsultaController` provides history viewing functionality for product returns. It serves both administrator and auxiliary user views, and provides detailed return information via JSON API.
+
+**Source:** `controllers/ConsultaController.php`
+
+**Access Control:** All authenticated users (Grado 1, 2, and 3)
+
+**Dependencies:**
+- `Models/ConsultaModel.php` - History query data access
+
+---
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the controller with basic authentication check.
+
+**Security Checks:**
+
+1. Starts PHP session if not active
+2. Verifies `$_SESSION['logged_in']` is set
+3. Redirects to login if not authenticated
+4. Instantiates `ConsultaModel`
+
+<Note>
+Unlike AdminController and PanelController, ConsultaController allows access to **all authenticated users** regardless of grado level (1, 2, or 3).
+</Note>
+
+**Source Code:**
+```php
+public function __construct() {
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    
+    // Seguridad: Si no está logueado, al login
+    if (!isset($_SESSION['logged_in'])) {
+        header('Location: index.php?url=auth/index');
+        exit;
+    }
+    $this->model = new ConsultaModel();
+}
+```
+
+---
+
+## Methods
+
+### index()
+
+```php
+public function index(): void
+```
+
+Displays the administrator history panel with all return records.
+
+**Functionality:**
+- Retrieves complete return history from database
+- Loads consultation view template
+- Intended for administrative users
+
+**Data Provided to View:**
+
+<ResponseField name="titulo" type="string">
+  Page title: `"Panel Administración - Historial"`
+</ResponseField>
+
+<ResponseField name="devoluciones" type="array">
+  Array of all return records from `ConsultaModel::obtenerHistorial()`
+</ResponseField>
+
+**View Rendered:** `Views/admin/consulta.php`
+
+**Example Usage:**
+```
+GET index.php?url=consulta/index
+```
+
+**Typical Record Structure:**
+
+<CodeGroup>
+```php Return Record Fields
+[
+    'id' => 42,
+    'fecha' => '2026-03-05 14:30:00',
+    'cliente' => 'Juan Pérez',
+    'nit' => '123456789-1',
+    'producto' => 'Producto XYZ',
+    'cantidad_und' => 10.0,
+    'cantidad_kg' => 5.5,
+    'motivo' => 'Producto defectuoso',
+    'estado' => 'pendiente', // or 'aprobado', 'rechazado'
+    'usuario_creador' => 'auxiliar1',
+    'observaciones' => 'Envase dañado'
+]
+```
+</CodeGroup>
+
+**Source Code:**
+```php
+public function index() {
+    $titulo = "Panel Administración - Historial";
+    $devoluciones = $this->model->obtenerHistorial();
+    require_once 'Views/admin/consulta.php';
+}
+```
+
+---
+
+### auxiliar()
+
+```php
+public function auxiliar(): void
+```
+
+Displays the auxiliary user history panel with return records.
+
+**Functionality:**
+- Retrieves complete return history (same as index)
+- Loads same view template as administrator
+- Intended for auxiliary staff users
+
+**Data Provided to View:**
+
+<ResponseField name="titulo" type="string">
+  Page title: `"Panel Auxiliar - Historial"`
+</ResponseField>
+
+<ResponseField name="devoluciones" type="array">
+  Array of all return records from `ConsultaModel::obtenerHistorial()`
+</ResponseField>
+
+**View Rendered:** `Views/admin/consulta.php` (shared with index)
+
+**Example Usage:**
+```
+GET index.php?url=consulta/auxiliar
+```
+
+<Note>
+Both `index()` and `auxiliar()` use the same view template and return the same data. The distinction exists for role-based routing, but the actual data and UI are identical.
+</Note>
+
+**Source Code:**
+```php
+public function auxiliar() {
+    $titulo = "Panel Auxiliar - Historial";
+    $devoluciones = $this->model->obtenerHistorial();
+    require_once 'Views/admin/consulta.php'; // Pueden compartir la misma vista
+}
+```
+
+---
+
+### detalles()
+
+```php
+public function detalles(): void
+```
+
+Returns detailed information for a specific return as JSON response with embedded HTML.
+
+**HTTP Method:** `GET`
+
+**Query Parameters:**
+
+<ParamField query="id" type="integer" required>
+  Return record ID to retrieve details for
+</ParamField>
+
+**Response:** JSON
+
+**Content-Type:** `application/json`
+
+**Response on Success:**
+
+<ResponseField name="success" type="boolean">
+  `true` if record found
+</ResponseField>
+
+<ResponseField name="html" type="string">
+  Pre-rendered HTML fragment with return details
+</ResponseField>
+
+**Response on Failure:**
+
+<ResponseField name="success" type="boolean">
+  `false` if record not found or invalid ID
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Error message: `"No encontrado"`
+</ResponseField>
+
+**Example Request:**
+```
+GET index.php?url=consulta/detalles&id=42
+```
+
+**Success Response Example:**
+```json
+{
+  "success": true,
+  "html": "<div class=\"detalles-container\">\n<h3>👤 Información: Juan Pérez</h3>\n<p><strong>Estado:</strong> pendiente</p>\n<p><strong>Observaciones:</strong> Envase dañado</p>\n</div>"
+}
+```
+
+**Error Response Example:**
+```json
+{
+  "success": false,
+  "message": "No encontrado"
+}
+```
+
+**HTML Output Structure:**
+
+The generated HTML contains:
+- Customer name in heading with emoji
+- Return status
+- Observations/notes
+
+<CodeGroup>
+```html Generated HTML
+<div class="detalles-container">
+    <h3>👤 Información: Juan Pérez</h3>
+    <p><strong>Estado:</strong> pendiente</p>
+    <p><strong>Observaciones:</strong> Envase dañado</p>
+</div>
+```
+</CodeGroup>
+
+<Warning>
+**Security Note:**
+
+The `htmlspecialchars()` function is used to escape customer name and observations, preventing XSS attacks. However, the status field is not escaped - ensure it comes from a controlled database enum.
+</Warning>
+
+**Source Code:**
+```php
+public function detalles() {
+    header('Content-Type: application/json');
+    $id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+
+    if ($id > 0) {
+        $data = $this->model->obtenerPorId($id);
+        if ($data) {
+            // Aquí puedes procesar el HTML tal como lo tenías en obtener_detalles.php
+            // O mejor aún, enviar solo los datos y que JS arme el HTML
+            ob_start();
+            ?>
+            <div class="detalles-container">
+                <h3>👤 Información: <?php echo htmlspecialchars($data['cliente']); ?></h3>
+                <p><strong>Estado:</strong> <?php echo $data['estado']; ?></p>
+                <p><strong>Observaciones:</strong> <?php echo htmlspecialchars($data['observaciones']); ?></p>
+            </div>
+            <?php
+            $html = ob_get_clean();
+            echo json_encode(['success' => true, 'html' => $html]);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'No encontrado']);
+        }
+    }
+    exit;
+}
+```
+
+**Alternative Implementation:**
+
+<Accordion title="JSON-Only Response (Better Practice)">
+
+Instead of returning pre-rendered HTML, consider returning raw data and letting the frontend construct the HTML:
+
+```php
+public function detalles() {
+    header('Content-Type: application/json');
+    $id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+
+    if ($id > 0) {
+        $data = $this->model->obtenerPorId($id);
+        if ($data) {
+            echo json_encode([
+                'success' => true,
+                'data' => [
+                    'id' => $data['id'],
+                    'cliente' => $data['cliente'],
+                    'nit' => $data['nit'],
+                    'producto' => $data['producto'],
+                    'estado' => $data['estado'],
+                    'observaciones' => $data['observaciones'],
+                    'cantidad_und' => $data['cantidad_und'],
+                    'cantidad_kg' => $data['cantidad_kg'],
+                    'fecha' => $data['fecha']
+                ]
+            ]);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'No encontrado']);
+        }
+    } else {
+        echo json_encode(['success' => false, 'message' => 'ID inválido']);
+    }
+    exit;
+}
+```
+
+This approach provides:
+- Better separation of concerns
+- More flexible frontend rendering
+- Easier testing
+- Reusability for different UI contexts
+
+</Accordion>
+
+---
+
+## Frontend Integration
+
+### JavaScript Example: Fetch Return Details
+
+```javascript
+// Function to load return details in modal
+async function verDetalles(idDevolucion) {
+    try {
+        const response = await fetch(`index.php?url=consulta/detalles&id=${idDevolucion}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            // Insert HTML into modal or container
+            document.getElementById('modal-content').innerHTML = result.html;
+            openModal();
+        } else {
+            alert('Error: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error al cargar detalles:', error);
+        alert('Error de conexión');
+    }
+}
+
+// Attach to table row buttons
+document.querySelectorAll('.btn-ver-detalles').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        const id = e.target.dataset.id;
+        verDetalles(id);
+    });
+});
+```
+
+### HTML Table with Details Button
+
+```html
+<table class="tabla-historial">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Fecha</th>
+            <th>Cliente</th>
+            <th>Producto</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+        </tr>
+    </thead>
+    <tbody>
+        <?php foreach ($devoluciones as $dev): ?>
+        <tr>
+            <td><?= $dev['id'] ?></td>
+            <td><?= date('d/m/Y', strtotime($dev['fecha'])) ?></td>
+            <td><?= htmlspecialchars($dev['cliente']) ?></td>
+            <td><?= htmlspecialchars($dev['producto']) ?></td>
+            <td>
+                <span class="badge badge-<?= $dev['estado'] ?>">
+                    <?= ucfirst($dev['estado']) ?>
+                </span>
+            </td>
+            <td>
+                <button class="btn-ver-detalles" data-id="<?= $dev['id'] ?>">
+                    Ver Detalles
+                </button>
+            </td>
+        </tr>
+        <?php endforeach; ?>
+    </tbody>
+</table>
+
+<!-- Modal for displaying details -->
+<div id="modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <div id="modal-content">
+            <!-- Details HTML will be inserted here -->
+        </div>
+    </div>
+</div>
+```
+
+---
+
+## Access Control Comparison
+
+| Controller | Grado 1 (Admin) | Grado 2 (Auxiliary) | Grado 3 (Consulta) |
+|------------|-----------------|---------------------|--------------------|
+| **ConsultaController** | ✅ Full access | ✅ Full access | ✅ Full access |
+| AdminController | ✅ Full access | ❌ No access | ❌ No access |
+| PanelController | ✅ Full access | ✅ Full access | ❌ No access |
+| AuthController | ✅ (all users) | ✅ (all users) | ✅ (all users) |
+
+<Note>
+**ConsultaController is the most permissive controller** - it allows all authenticated users to view return history, making it suitable for read-only consultation roles.
+</Note>
+
+---
+
+## Usage Examples
+
+### Administrator Viewing History
+
+```
+1. Admin logs in with Grado 1 credentials
+2. Navigates to: index.php?url=consulta/index
+3. ConsultaController::index() loads all returns
+4. View displays table with all historical records
+5. Admin clicks "Ver Detalles" on a return
+6. AJAX request to: index.php?url=consulta/detalles&id=42
+7. ConsultaController::detalles() returns JSON with HTML
+8. Frontend displays details in modal
+```
+
+### Auxiliary User Viewing History
+
+```
+1. Auxiliary logs in with Grado 2 credentials
+2. Navigates to: index.php?url=consulta/auxiliar
+3. ConsultaController::auxiliar() loads all returns
+4. View displays same table as admin
+5. Can view details via AJAX same as admin
+```
+
+### Consulta-Only User
+
+```
+1. User logs in with Grado 3 credentials
+2. AuthController redirects to: index.php?url=consulta/index
+3. ConsultaController::index() loads history
+4. User has read-only access to all return history
+5. Cannot access admin or panel features
+```
+
+---
+
+## Data Flow Diagram
+
+<Accordion title="Request/Response Flow">
+
+### Page Load Flow (index/auxiliar)
+
+```
+Browser Request
+    ↓
+index.php?url=consulta/index
+    ↓
+Router dispatches to ConsultaController::index()
+    ↓
+ConsultaController instantiated (constructor runs)
+    ↓
+Authentication check
+    ↓
+ConsultaModel::obtenerHistorial() called
+    ↓
+Database query executes
+    ↓
+Array of returns returned
+    ↓
+View template loaded with data
+    ↓
+HTML rendered and sent to browser
+```
+
+### AJAX Details Flow
+
+```
+JavaScript fetch()
+    ↓
+GET index.php?url=consulta/detalles&id=42
+    ↓
+ConsultaController::detalles() called
+    ↓
+Extract and validate ID parameter
+    ↓
+ConsultaModel::obtenerPorId(42) called
+    ↓
+Database query executes
+    ↓
+Return record retrieved
+    ↓
+HTML generated with ob_start/ob_get_clean
+    ↓
+JSON response encoded and sent
+    ↓
+JavaScript receives JSON
+    ↓
+HTML inserted into DOM
+```
+
+</Accordion>
+
+---
+
+## Potential Enhancements
+
+<Accordion title="Suggested Improvements">
+
+1. **Pagination**
+   - Add limit/offset parameters to `obtenerHistorial()`
+   - Implement page navigation in view
+   - Improve performance for large datasets
+
+2. **Filtering**
+   - Filter by date range
+   - Filter by status (pendiente, aprobado, rechazado)
+   - Filter by customer or product
+
+3. **Sorting**
+   - Sort by date, status, customer name
+   - Add ORDER BY clauses to queries
+
+4. **Export**
+   - Add CSV/Excel export functionality
+   - Generate PDF reports
+
+5. **Pure JSON API**
+   - Return raw data instead of pre-rendered HTML
+   - Let frontend handle all rendering
+   - Better for API reusability
+
+6. **Search**
+   - Full-text search across returns
+   - Search by NIT, customer name, product
+
+7. **Role-Based Filtering**
+   - Auxiliary users only see their own returns
+   - Admins see all returns
+   - Implement user filtering in ConsultaModel
+
+</Accordion>
+
+---
+
+## Related Components
+
+- [AuthController](/api/auth-controller) - Authentication (required for access)
+- [AdminController](/api/admin-controller) - Review and process returns
+- [PanelController](/api/panel-controller) - Create new returns
+- ConsultaModel - Database queries for history retrieval
