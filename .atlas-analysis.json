@@ -1,0 +1,94 @@
+{
+  "projectType": "saas",
+  "projectName": "DevolutionSync",
+  "projectDescription": "Enterprise product return and deviation management system with role-based workflows and approval processes",
+  "theme": "linden",
+  "primaryColor": "#2563eb",
+  "lightColor": "#3b82f6",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/authentication",
+              "features/return-management",
+              "features/approval-workflow",
+              "features/dashboard-analytics"
+            ]
+          },
+          {
+            "group": "User Guides",
+            "pages": [
+              "guides/admin-guide",
+              "guides/auxiliary-guide",
+              "guides/consultation-guide"
+            ]
+          },
+          {
+            "group": "Technical Documentation",
+            "pages": [
+              "technical/architecture",
+              "technical/database-schema",
+              "technical/mvc-structure",
+              "technical/docker-deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Controllers",
+            "pages": [
+              "api/auth-controller",
+              "api/admin-controller",
+              "api/panel-controller",
+              "api/consulta-controller"
+            ]
+          },
+          {
+            "group": "Models",
+            "pages": [
+              "api/devolucion-model",
+              "api/producto-model",
+              "api/usuario-model"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Role-based access control (Admin, Auxiliary, Consultation)",
+    "Product return and deviation tracking",
+    "Multi-stage approval workflow",
+    "Real-time dashboard with statistics",
+    "Evidence upload and management",
+    "Email notifications via PHPMailer",
+    "Docker containerization support",
+    "MySQL database with PDO"
+  ],
+  "publicApiSurface": [
+    "AuthController::login() - User authentication",
+    "AdminController::revisar() - Review and approve/reject returns",
+    "PanelController::registrar() - Register new product returns",
+    "ConsultaController::index() - Query return history",
+    "DevolucionModel::guardar() - Save return record",
+    "DevolucionModel::obtenerPendientes() - Get pending returns",
+    "DevolucionModel::procesarRevision() - Process admin review",
+    "DevolucionModel::obtenerEstadisticas() - Get dashboard statistics"
+  ]
+}
